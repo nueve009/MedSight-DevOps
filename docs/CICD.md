@@ -22,3 +22,8 @@ npx tsc --noEmit
 - Branch protection on `main`
 - Deploy (CD)
 - Secrets and environments
+
+## Branch protection
+
+- `main` needs a pull request and the `test` check to pass before merging
+- Tested with a deliberately broken pull request (type error): check failed, merge was blocked
