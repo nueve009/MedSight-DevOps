@@ -41,3 +41,9 @@ npx tsc --noEmit
 - App packages are left to the team, because Expo SDK 57 expects specific versions and CI cannot test the running app
 - Security alerts and security updates stay on for all packages
 - Config file: `.github/dependabot.yml`
+
+## Safety settings in ci.yml
+
+- `permissions: contents: read` so the pipeline can only read the code
+- `concurrency` with cancel-in-progress, so an old run stops when a newer push arrives
+- `timeout-minutes: 10` so a stuck job is stopped (a normal run takes about 25 to 35 seconds)
