@@ -2,6 +2,8 @@ import { colors } from "@/theme/theme";
 import Svg, { Path } from "react-native-svg";
 import { IconName, iconPaths } from "./iconPaths";
 
+export type { IconName };
+
 // ─── PROPS ───
 
 type IconProps = {
