@@ -27,3 +27,10 @@ npx tsc --noEmit
 
 - `main` needs a pull request and the `test` check to pass before merging
 - Tested with a deliberately broken pull request (type error): check failed, merge was blocked
+
+## Dependabot
+
+- Checks npm packages and GitHub Actions once a week
+- Opens a pull request for each update, and the `test` check runs on it
+- Major version updates are ignored on purpose, because Expo SDK 57 expects specific versions
+- Config file: `.github/dependabot.yml`
