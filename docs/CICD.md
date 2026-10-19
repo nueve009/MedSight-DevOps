@@ -34,9 +34,6 @@ npx tsc --noEmit
 - Opens a pull request for each update, and the `test` check runs on it
 - Major version updates are ignored on purpose, because Expo SDK 57 expects specific versions
 - Config file: `.github/dependabot.yml`
-
-## Dependabot
-
 - Version updates are limited to GitHub Actions (`ci.yml`), checked weekly
 - App packages are left to the team, because Expo SDK 57 expects specific versions and CI cannot test the running app
 - Security alerts and security updates stay on for all packages
