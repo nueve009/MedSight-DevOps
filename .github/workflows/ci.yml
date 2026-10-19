@@ -26,3 +26,13 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
+
+  secret-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    steps:
+      - run: |
+          if [ -n "$PRACTICE_SECRET" ]; then echo "secret is available"; else echo "secret is missing"; exit 1; fi
+        env:
+          PRACTICE_SECRET: ${{ secrets.PRACTICE_SECRET }}
