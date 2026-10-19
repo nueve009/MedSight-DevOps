@@ -5,6 +5,7 @@ const expoConfig = require("eslint-config-expo/flat");
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ["dist/*"],
+    // The Python backend has its own tools; ESLint only checks the app.
+    ignores: ["dist/*", "backend/*"],
   }
 ]);

@@ -1,0 +1,10 @@
+# Local prototype (main.py webcam loop, benchmark_ocr.py, sort_packaging_images.py).
+# On the phone, OCR and TTS run natively, so none of this ships to the server.
+-r requirements.txt
+opencv-python>=4.9.0
+pyttsx3>=2.90
+
+# OCR engines (benchmarked against each other — see benchmark_ocr.py)
+paddleocr>=2.7.0
+paddlepaddle>=2.6.0
+easyocr>=1.7.0

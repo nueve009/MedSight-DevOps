@@ -1,0 +1,100 @@
+# =========================
+# Secrets (never commit)
+# =========================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+api_keys.*
+
+# =========================
+# Python / FastAPI backend
+# =========================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+dist/
+build/
+
+# =========================
+# Node / Expo / React Native
+# =========================
+node_modules/
+.expo/
+.expo-shared/
+web-build/
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Native build output (if using expo prebuild)
+/android/
+/ios/
+*.apk
+*.aab
+*.ipa
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+
+# =========================
+# ML / OCR assets
+# =========================
+# Downloaded model weights and checkpoints
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.safetensors
+*.pdparams
+*.pdopt
+models/
+checkpoints/
+.paddleocr/
+.EasyOCR/
+
+# Datasets (download from Kaggle instead of committing)
+data/
+datasets/
+*.zip
+*.tar.gz
+
+# =========================
+# Prototype runtime output
+# =========================
+# Local cache DB and scan logs
+*.sqlite
+*.sqlite3
+*.db
+cache/
+logs/
+*.log
+captures/
+frames/
+
+# =========================
+# OS / IDE
+# =========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+sorted_output/
+
+cache_vault/
+# Photos of medicine boxes used to build kb/ (kept in the shared drive)
+evidence/

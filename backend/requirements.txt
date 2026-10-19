@@ -1,0 +1,6 @@
+# Backend server (api.py + pipeline.py). Kept small for the cloud image.
+# For the local webcam/OCR prototype, install requirements-local.txt instead.
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-dotenv>=1.0.0
+requests>=2.31.0       # Groq / Ollama HTTP client (llm_client.py)

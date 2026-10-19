@@ -1,10 +1,11 @@
 import { colors, fonts, fontSizes } from "@/theme/theme";
 import type { ReactNode } from "react";
-import { StyleProp, Text, TextStyle } from "react-native";
+import { StyleProp, Text, TextProps, TextStyle } from "react-native";
 
 // ─── PROPS ───
 
-type AppTextProps = {
+// Extra Text props (accessibilityRole, numberOfLines, ...) are passed through.
+type AppTextProps = Omit<TextProps, "style" | "children"> & {
   variant: "display" | "h1" | "title" | "body" | "bodySm" | "caption";
   children: ReactNode;
   bold?: boolean;
@@ -20,9 +21,11 @@ export function AppText({
   bold = false,
   color = colors.text,
   style,
+  ...textProps
 }: AppTextProps) {
   return (
     <Text
+      {...textProps}
       style={[
         {
           fontFamily: bold ? fonts.bold : fonts.regular,

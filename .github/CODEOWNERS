@@ -1,2 +1,3 @@
-# Every change needs a review from the repository owner before it can be merged into main.
-* @BlinkyPanoptes
+# Every change to main needs approval from one of these code owners:
+# the repo owner, or the DevOps Engineer.
+* @BlinkyPanoptes @nueve009

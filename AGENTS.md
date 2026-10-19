@@ -47,3 +47,10 @@ Docs: https://docs.expo.dev/eas/index.md
 - Colors, font sizes, spacing, and radii come from `src/theme/theme.ts`. No hard-coded hex values or font sizes.
 - Follow the "Conventions" section in `PROGRESS.md` (accessibility labels, minimum text size 18, large touch targets).
 - When you finish or start a piece of work, update `PROGRESS.md`.
+
+## Backend (`backend/`)
+
+- The Python backend (FastAPI) lives in `backend/`. Read `backend/README.md` first; it has the API contract, setup and run commands.
+- Server code is in `backend/app/` (run `uvicorn app.api:app --reload` from `backend/`). Laptop-only tools are in `backend/scripts/` (run as `python -m scripts.<name>` from `backend/`).
+- The app talks to the backend only through `src/services/api.ts`.
+- Secrets (`GROQ_API_KEY`, `MEDSIGHT_API_KEY`) go in `backend/.env`, which is git-ignored. Never commit it.

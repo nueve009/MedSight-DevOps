@@ -7,6 +7,8 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 
+import { SettingsProvider } from "@/context/SettingsContext";
+
 // Keep the splash screen visible until the fonts are ready
 SplashScreen.preventAutoHideAsync();
 
@@ -26,5 +28,9 @@ export default function RootLayout() {
     return null;
   }
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <SettingsProvider>
+      <Stack screenOptions={{ headerShown: false }} />
+    </SettingsProvider>
+  );
 }
