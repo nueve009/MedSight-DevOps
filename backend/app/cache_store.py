@@ -1,9 +1,8 @@
 """
 SQLite cache for medicine descriptions, keyed by utils.normalize_key().
 
-Same get/set interface as obsidian_cache.ObsidianCache, but safe for the
-backend's concurrent requests: each call opens its own connection, and WAL
-mode lets readers proceed while a write is in progress.
+Safe for the backend's concurrent requests: each call opens its own
+connection, and WAL mode lets readers proceed while a write is in progress.
 """
 import sqlite3
 from contextlib import contextmanager
@@ -29,8 +28,9 @@ CREATE TABLE IF NOT EXISTS medicines (
 
 
 class CacheStore:
-    def __init__(self, db_path: Path = config.CACHE_DB_PATH):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[Path] = None):
+        # Read the setting at call time, not import time, so tests can point it elsewhere.
+        self.db_path = db_path or config.CACHE_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")

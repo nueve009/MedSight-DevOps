@@ -10,6 +10,9 @@ because a wrong row here would be spoken to a user as verified fact.
 Usage:
     python -m scripts.kb_build           validate, then build data/kb.sqlite
     python -m scripts.kb_build --check   validate only (run after editing the CSVs)
+    python -m scripts.kb_build --check --allow-empty
+                                         CI only, until the team's first rows are merged:
+                                         an empty dataset is a warning, not an error
 """
 import csv
 import hashlib
@@ -101,7 +104,7 @@ class Validator:
             self.error(where, "checked_by must be a different person from entered_by")
 
 
-def validate(kb_dir: Path = config.KB_DIR) -> tuple[Validator, dict]:
+def validate(kb_dir: Path = config.KB_DIR, allow_empty: bool = False) -> tuple[Validator, dict]:
     v = Validator()
     products = v.read(kb_dir / "products.csv", PRODUCT_FIELDS)
     ingredients = v.read(kb_dir / "ingredients.csv", INGREDIENT_FIELDS)
@@ -180,7 +183,7 @@ def validate(kb_dir: Path = config.KB_DIR) -> tuple[Validator, dict]:
             v.error("passages.csv", f"product '{pid}' has no 'indications' passage")
 
     if not products:
-        v.error("products.csv", "no products yet")
+        (v.warn if allow_empty else v.error)("products.csv", "no products yet")
     elif len(products) != 10:
         v.warn("products.csv", f"{len(products)} products (the prototype targets 10)")
 
@@ -237,7 +240,10 @@ def build(data: dict, version: str, db_path: Path = config.KB_DB_PATH) -> None:
 
 def main() -> None:
     check_only = "--check" in sys.argv[1:]
-    v, data = validate()
+    allow_empty = "--allow-empty" in sys.argv[1:]
+    if allow_empty and not check_only:
+        sys.exit("--allow-empty only works with --check; an empty kb.sqlite is never built.")
+    v, data = validate(allow_empty=allow_empty)
 
     for w in v.warnings:
         print(f"warning  {w}")

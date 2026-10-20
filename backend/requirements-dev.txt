@@ -1,0 +1,6 @@
+# Tests, lint and audit (CI and developer laptops). Not installed on the server.
+-r requirements.txt
+pytest==9.1.1
+httpx2==2.15.1         # FastAPI's TestClient
+ruff==0.17.1
+pip-audit==2.10.1

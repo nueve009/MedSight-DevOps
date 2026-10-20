@@ -12,6 +12,7 @@ identify() returns the API response shape:
     spoken_text  exactly what the client should read aloud
     cache        "hit" | "miss" | None
 """
+import logging
 from typing import Optional
 
 from app import config
@@ -29,11 +30,29 @@ UNVERIFIED_WARNING = ("Warning: this medicine is not in my verified list, so thi
                       "information only and may be inaccurate.")
 UNVERIFIED_ADVICE = "Please check the label or ask a pharmacist before taking it."
 
+log = logging.getLogger(__name__)
+
+
+def _log_scan(run_record: dict) -> None:
+    """One stdout line per scan. No OCR text: that stays in the local run log."""
+    parsed = run_record.get("parsed") or {}
+    desc = run_record.get("description_result") or {}
+    log.info("scan", extra={"fields": {
+        "outcome": run_record.get("outcome"),
+        "status": run_record.get("status", "rescan"),
+        "cache": run_record.get("cache"),
+        "parse_confidence": parsed.get("confidence"),
+        "description_status": desc.get("status"),
+        "platform": run_record.get("platform"),
+        "app_version": run_record.get("app_version"),
+    }})
+
 
 def _rescan(message: str, run_record: dict, outcome: str) -> dict:
     run_record["outcome"] = outcome
     run_record["final_spoken_text"] = message
     append_jsonl(config.RUN_LOG_PATH, run_record)
+    _log_scan(run_record)
     return {
         "status": "rescan",
         "brand_name": None, "generic_name": None, "dosage": None,
@@ -91,16 +110,19 @@ def identify(raw_text: str, ocr_confidence: Optional[float], cache: CacheStore,
         grounded = desc_result["grounded"]
         source_url = desc_result.get("source_url")
         desc_confidence = desc_result["confidence"]
-        cache.set(
-            cache_key=cache_key,
-            generic_name=generic_name or "",
-            brand_name=brand_name or "",
-            dosage=dosage or "",
-            description=description,
-            grounded=grounded,
-            source_url=source_url,
-            confidence=desc_confidence,
-        )
+        # Only a usable description is cached; a failed or "don't recognize"
+        # reply is tried again on the next scan.
+        if desc_result["status"] == "ok":
+            cache.set(
+                cache_key=cache_key,
+                generic_name=generic_name or "",
+                brand_name=brand_name or "",
+                dosage=dosage or "",
+                description=description,
+                grounded=grounded,
+                source_url=source_url,
+                confidence=desc_confidence,
+            )
         run_record["description_result"] = desc_result
         cache_status = "miss"
     run_record["cache"] = cache_status
@@ -135,6 +157,7 @@ def identify(raw_text: str, ocr_confidence: Optional[float], cache: CacheStore,
     run_record["status"] = status
     run_record["final_spoken_text"] = spoken
     append_jsonl(config.RUN_LOG_PATH, run_record)
+    _log_scan(run_record)
 
     return {
         "status": status,

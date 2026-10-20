@@ -40,7 +40,9 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `app/description_agent.py` - Medicine description generation
 - `app/confidence_handler.py` - Confidence evaluation
 - `app/cache_store.py` - SQLite cache used by the pipeline
-- `scripts/obsidian_cache.py` - Old markdown-vault cache (no longer used by the pipeline)
+- `app/logging_setup.py` - JSON logs on stdout, request IDs
+- `tests/` - pytest suite (LLM always faked); `tests/fixtures/` holds fake data
+- `ops/` - files the DevOps engineer moves outside `backend/` (CI workflow)
 - `scripts/tts_output.py` - Text-to-speech functionality
 - `app/utils.py` - Shared utilities
 - `scripts/benchmark_ocr.py` - OCR benchmarking
@@ -49,22 +51,25 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `scripts/kb_build.py` - Validates `kb/` and builds `data/kb.sqlite`
 - `scripts/kb_make_scans.py` - Drafts evaluation scans from dataset images
 
-Generated, gitignored folders (never commit them): `.venv/`, `cache_vault/`,
-`data/`, `logs/`, `sorted_output/`. Code that writes to `cache_vault/` must create it if it
-does not exist (`os.makedirs(..., exist_ok=True)`).
+Generated, gitignored folders (never commit them): `.venv/`, `data/`,
+`logs/`, `captures/`, `sorted_output/`. Importing a module must not create
+folders; code that writes to one creates it when it writes
+(`path.parent.mkdir(parents=True, exist_ok=True)`) or at startup via
+`config.ensure_dirs()`.
 
 ## Commands
 
 - Activate venv (PowerShell): `.\.venv\Scripts\Activate.ps1`
-- Install: `pip install -r requirements.txt` (server only) or
+- Install: `pip install -r requirements.txt` (server only),
+  `pip install -r requirements-dev.txt` (adds tests, lint, audit) or
   `pip install -r requirements-local.txt` (adds webcam, OCR, TTS)
 - Run the backend: `uvicorn app.api:app --reload`
 - Run the local webcam prototype: `python -m scripts.main`
 - Benchmark OCR: `python -m scripts.benchmark_ocr <dataset_root>` (path to the
   Kaggle dataset, one subfolder per product class; required)
-- Tests: no automated test suite exists yet. Update this line when one is
-  added. Until then, verify changes by running the affected module or
-  `scripts/main.py` and reporting what you observed.
+- Tests: `pytest` (no real LLM, search or database calls) and `ruff check .`.
+  Both must pass before a change is done. Changes to prompts or models are
+  also checked by hand against the real model, and the result reported.
 
 ## Medical Safety Rules (highest priority)
 
@@ -94,7 +99,7 @@ a confident wrong answer is dangerous.
 3. Preserve existing architecture unless there is a strong reason to change
    it.
 4. Do not expose secrets stored in `.env`. Never hardcode API keys in code.
-5. Do not commit `.venv`, `cache_vault/`, `data/`, `sorted_output/`, or `.env`.
+5. Do not commit `.venv`, `data/`, `logs/`, `captures/`, `sorted_output/`, or `.env`.
 6. Clearly distinguish between observed code behavior and assumptions.
 7. Prefer small, reversible changes.
 8. Run the affected code after modifying it and report the result.

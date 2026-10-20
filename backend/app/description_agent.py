@@ -38,9 +38,16 @@ _SCHEMA = {
 }
 
 MAX_CONFIDENCE = 0.6  # unverified answers never rate higher than this
+FAILED_DESCRIPTION = "I could not generate a description for this product."
 
 
 def get_description(generic_name: str, brand_name: str, dosage: str) -> dict:
+    """Returns {status, description, grounded, source_url, confidence}.
+
+    status is "ok", "not_recognized" (the model said it doesn't know the
+    product) or "failed" (unusable reply). Only "ok" results may be cached,
+    so a temporary failure isn't repeated on every later scan.
+    """
     parts = [p for p in (brand_name, generic_name, dosage) if p]
     query = "Medicine: " + ", ".join(parts) if parts else "Medicine: unknown"
 
@@ -48,13 +55,20 @@ def get_description(generic_name: str, brand_name: str, dosage: str) -> dict:
 
     try:
         parsed = json.loads(reply)
-        description = (parsed.get("description") or "").strip()
+        description = str(parsed.get("description") or "").strip()
         confidence = float(parsed.get("confidence") or 0.0)
-    except (json.JSONDecodeError, ValueError):
-        description = "I could not generate a description for this product."
-        confidence = 0.0
+    except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
+        description, confidence = "", 0.0
+
+    if not description:
+        status, description, confidence = "failed", FAILED_DESCRIPTION, 0.0
+    elif "recognize" in description.lower():
+        status = "not_recognized"
+    else:
+        status = "ok"
 
     return {
+        "status": status,
         "description": description,
         "grounded": False,          # no FDA lookup yet (planned: PH FDA registry match)
         "source_url": None,

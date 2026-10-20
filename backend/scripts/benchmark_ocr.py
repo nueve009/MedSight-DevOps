@@ -23,13 +23,13 @@ Writes:
     config/ocr_benchmark_results.json  (full per-image results, for manual review)
     config/ocr_engine_choice.json      (winner, read by main.py)
 """
+import json
 import sys
 import time
-import json
 from pathlib import Path
 
 from app import config
-from scripts.ocr_engines import run_paddleocr, run_easyocr
+from scripts.ocr_engines import run_easyocr, run_paddleocr
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -126,6 +126,7 @@ def main():
 
     result = run_benchmark(dataset_root)
 
+    config.BENCHMARK_RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     config.BENCHMARK_RESULTS_PATH.write_text(json.dumps(result, indent=2), encoding="utf-8")
     config.OCR_ENGINE_CHOICE_PATH.write_text(
         json.dumps({"engine": result["winner"], "reason": result["winner_reason"]}, indent=2),

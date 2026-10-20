@@ -55,7 +55,7 @@ def _chat_groq(system: str, user: str, schema: dict | None, max_tokens: int) -> 
             timeout=60,
         )
     except requests.RequestException as e:
-        raise LLMUnavailableError(f"Can't reach Groq: {e}")
+        raise LLMUnavailableError(f"Can't reach Groq: {e}") from e
 
     if resp.status_code == 429:
         raise LLMUnavailableError("Groq rate limit reached. Try again shortly.")
@@ -81,14 +81,14 @@ def _chat_ollama(system: str, user: str, schema: dict | None, max_tokens: int) -
     try:
         resp = requests.post(f"{config.OLLAMA_HOST}/api/chat", json=payload, timeout=180)
         resp.raise_for_status()
-    except requests.ConnectionError:
+    except requests.ConnectionError as e:
         raise LLMUnavailableError(
             f"Can't reach Ollama at {config.OLLAMA_HOST}. Is it running? "
             f"Try `ollama list` in a terminal, or open the Ollama app."
-        )
+        ) from e
     except requests.HTTPError as e:
         raise LLMUnavailableError(
             f"Ollama returned an error: {e}. Check that the model "
             f"'{config.OLLAMA_MODEL}' appears in `ollama list`."
-        )
+        ) from e
     return resp.json()["message"]["content"]
