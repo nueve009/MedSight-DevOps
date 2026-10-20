@@ -53,3 +53,16 @@
 - Sync with the team repo (`upstream`)
 - Automatic code review (CodeRabbit)
 - Deploy (CD)
+
+## Security review log
+
+### 2026-10-20: CodeQL alert on PR #23 (dismissed as false positive)
+
+- **Alert:** "Clear-text logging of sensitive information" (high), rule `py/clear-text-logging-sensitive-data`
+- **Where:** `backend/scripts/tts_output.py`, line 16: `print(f"\n🔊 {text}")` inside `speak()`
+- **What I checked:** the alert's "Show paths" list. The flagged data started at a fixed sentence (`PRESCRIPTION_LINE` in `backend/app/speech.py`) and moved through `pipeline.py` to `speak()`. No key, password, or user data appeared in the path.
+- **Author's explanation:** CodeQL matched a variable name that looked sensitive.
+- **Decision:** dismissed as a false positive, with a written reason in the dismissal comment.
+- **Why this was safe:** the text is fixed app wording and the generated answer, printed by the local demo script.
+- **If it comes back:** open "Show paths" first. If the path carries only fixed app text, ask the author to rename the constant or dismiss it with a reason. If it carries real data (user input, keys, medicine records tied to a person), treat it as real and ask the author to fix the code.
+- **Note:** CodeQL is not a required check, so merges are not blocked automatically. A person has to look at its alerts.
