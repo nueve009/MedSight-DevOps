@@ -9,24 +9,42 @@ Run locally:
 Endpoints:
     GET  /health    liveness check for the cloud host
     POST /identify  OCR text in, identification + spoken_text out (needs X-API-Key)
+
+Every response carries an X-Request-Id header (the client's own, if it sent a
+valid one), and every log line for that request includes the same ID.
 """
+import logging
 import secrets
+from contextlib import asynccontextmanager
 from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app import config
 from app.cache_store import CacheStore
 from app.llm_client import LLMUnavailableError
+from app.logging_setup import RequestIdMiddleware, configure_logging
 from app.pipeline import identify
 
 SERVICE_BUSY_MESSAGE = ("The identification service is busy or unavailable right now. "
                         "Please try again in a moment.")
 
-app = FastAPI(title="MedSight backend")
-cache = CacheStore()
+log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    configure_logging(config.LOG_LEVEL)
+    config.ensure_dirs()
+    app.state.cache = CacheStore()
+    log.info("startup", extra={"fields": {"llm_provider": config.LLM_PROVIDER}})
+    yield
+
+
+app = FastAPI(title="MedSight backend", lifespan=lifespan)
+app.add_middleware(RequestIdMiddleware)
 
 
 class OCRLine(BaseModel):
@@ -74,7 +92,7 @@ def health() -> dict:
 # Sync endpoint on purpose: the pipeline makes blocking HTTP calls, and
 # FastAPI runs sync endpoints in a thread pool.
 @app.post("/identify", response_model=IdentifyResponse, dependencies=[Depends(require_api_key)])
-def identify_endpoint(req: IdentifyRequest):
+def identify_endpoint(req: IdentifyRequest, request: Request):
     raw_text = req.text or "\n".join(line.text for line in req.lines)
     meta = {
         "client": "mobile",
@@ -84,9 +102,9 @@ def identify_endpoint(req: IdentifyRequest):
         "ocr_lines": [line.model_dump() for line in req.lines],
     }
     try:
-        return identify(raw_text, req.ocr_confidence, cache, meta=meta)
+        return identify(raw_text, req.ocr_confidence, request.app.state.cache, meta=meta)
     except LLMUnavailableError as e:
-        print(f"LLM unavailable: {e}")
+        log.error("llm unavailable", extra={"fields": {"error": str(e)}})
         return JSONResponse(status_code=503, content={
             "status": "service_unavailable",
             "spoken_text": SERVICE_BUSY_MESSAGE,

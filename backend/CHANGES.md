@@ -5,6 +5,61 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-10-20 — M0: foundations (tests, logging, defect fixes)
+
+**Branch:** `backend/m0-foundations`. First milestone of
+`docs/medsight-development-plan.md` (section 6, M0).
+
+**Added**
+- **Tests:** `tests/` with pytest, 31 tests. `conftest.py` replaces
+  `llm_client.chat` with a `FakeLLM` in every test, so no test can call a
+  real model, and points data and log paths at a temp folder.
+  `tests/fixtures/fake_kb.py` writes fake `kb/` datasets for `kb_build` tests.
+- **Tooling:** `pyproject.toml` (pytest and ruff settings),
+  `requirements-dev.txt` (pytest, httpx2, ruff, pip-audit). Server packages
+  in `requirements.txt` are now pinned. `pip-audit` found no known
+  vulnerabilities.
+- **Logging** (`app/logging_setup.py`): one JSON object per line on stdout,
+  ASCII-escaped. `RequestIdMiddleware` gives each request an ID (the client's
+  `X-Request-Id` if it is 1 to 64 safe characters, else a new one), returns
+  it as a header and puts it on every log line, including lines written from
+  the sync endpoint's worker thread. One line per request and one per scan;
+  neither includes OCR text.
+- **CI:** `ops/backend-ci.yml` (ruff, pytest, `kb_build --check
+  --allow-empty`, pip-audit, gitleaks), with a checklist in `ops/README.md`
+  for the DevOps engineer: copy it to `.github/workflows/`, add the required
+  checks, the `kb/` CODEOWNERS line and a pip Dependabot entry.
+- `kb_build.py --check --allow-empty`: an empty dataset is a warning, so CI
+  can run before the team's rows land. It refuses to build with it.
+
+**Fixed** (each has a test that failed on the old code)
+- Failed descriptions were cached. `get_description()` now returns `status`
+  (`ok`, `not_recognized`, `failed`) and the pipeline caches only `ok`.
+- "500 mg", "500mg" and "500 MG" gave different cache keys.
+  `utils.normalize_strength()` now joins number and unit and lowercases;
+  different strengths or units still differ.
+- Importing `app.config` created `cache_vault/`, `data/`, `logs/` and
+  `config/`. Now `config.ensure_dirs()` does it at startup. `CacheStore` is
+  created in the API's startup, and reads its path at call time.
+- `scripts/main.py` kept every webcam capture. It now deletes each one after
+  OCR unless `--save-captures` is passed.
+
+**Removed:** `scripts/obsidian_cache.py`, `CACHE_VAULT_*`,
+`PH_FDA_REFERENCE_DOMAINS`, `utils.safe_slug`. Remaining `print` calls in
+server code became log calls.
+
+**Verified:** `pytest` 31 passed; `ruff check .` clean;
+`pip-audit -r requirements.txt` clean; a live `uvicorn` run returned the
+client's `X-Request-Id`, 401 without a key, `rescan` on empty text, and wrote
+only JSON lines to stdout and nothing into the repo.
+
+**Not done here (outside `backend/`):** the workflow file, branch
+protection, CODEOWNERS and Dependabot changes are in `ops/README.md` for the
+DevOps engineer. Uvicorn's first two startup lines are still plain text on
+stderr (before the app loads); M5 adds a log config for the start command.
+
+---
+
 ## 2026-10-08 — Unverified medicines get a warned, general description
 
 **Commit:** `72966aa`

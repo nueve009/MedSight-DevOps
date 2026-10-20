@@ -1,0 +1,14 @@
+# Tool settings only; the backend isn't packaged. Dependencies are in requirements*.txt.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".venv", "data", "logs", "sorted_output"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]

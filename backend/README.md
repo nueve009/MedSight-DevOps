@@ -27,8 +27,12 @@ backend/
 ├── app/        the server: what the cloud host runs (uvicorn app.api:app)
 ├── scripts/    laptop-only tools: webcam prototype, OCR benchmark, dataset builders
 ├── kb/         the verified medicine dataset (CSV files)
-├── requirements.txt         server packages
+├── tests/      pytest suite; the LLM is always faked
+├── ops/        CI workflow and other files the DevOps engineer moves into place
+├── requirements.txt         server packages (pinned)
+├── requirements-dev.txt     server + pytest, ruff, pip-audit
 ├── requirements-local.txt   server + laptop-tool packages (OCR, webcam, TTS)
+├── pyproject.toml           pytest and ruff settings
 └── .env.example             copy to .env and fill in
 ```
 
@@ -38,10 +42,18 @@ Scripts run as modules, so they can import the server code:
 ## Setup
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate             # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt    # server only
-cp .env.example .env               # then fill in GROQ_API_KEY and MEDSIGHT_API_KEY
+python -m venv .venv                   # Python 3.12
+.venv\Scripts\activate                 # macOS/Linux: source .venv/bin/activate
+pip install -r requirements-dev.txt    # server + test tools (requirements.txt for server only)
+cp .env.example .env                   # then fill in GROQ_API_KEY and MEDSIGHT_API_KEY
+```
+
+### Tests and lint
+
+```bash
+pytest           # never calls a real LLM; data and logs go to a temp folder
+ruff check .
+pip-audit -r requirements.txt
 ```
 
 For the local webcam prototype and OCR benchmark, install
@@ -59,6 +71,7 @@ pyttsx3.
 | `MEDSIGHT_API_KEY` | — | Shared secret the app sends as `X-API-Key`. If unset, `/identify` refuses every request. |
 | `LOW_CONFIDENCE_THRESHOLD` | `0.55` | Any stage below this gets a spoken caveat |
 | `MEDSIGHT_DATA_DIR` / `MEDSIGHT_LOGS_DIR` | `data/` / `logs/` | Point at a persistent disk on the cloud host |
+| `LOG_LEVEL` | `INFO` | Level for the JSON logs on stdout |
 
 ## Run the backend
 
@@ -130,6 +143,11 @@ Other responses:
 
 `GET /health` returns `{"status": "ok", "llm_provider": "..."}`.
 
+**Request IDs:** every response has an `X-Request-Id` header. The app may
+send its own `X-Request-Id` (up to 64 letters, digits, `.`, `_` or `-`) and
+gets the same value back; otherwise the server makes one. Quote it when
+reporting a problem, because every server log line for that scan carries it.
+
 ## Local webcam prototype
 
 `scripts/main.py` runs OCR on the laptop and then the same pipeline as the backend.
@@ -138,6 +156,7 @@ It's useful for testing without the phone.
 ```bash
 python -m scripts.benchmark_ocr /path/to/kaggle_dataset_root   # once: picks PaddleOCR vs EasyOCR
 python -m scripts.main                                         # SPACE = capture, q = quit
+python -m scripts.main --save-captures                         # also keep each frame in captures/
 ```
 
 The benchmark uses the Kaggle
@@ -148,7 +167,12 @@ There's no OCR ground truth in this dataset, so spot-check the results.
 
 ## Logs
 
-Every scan, from the app or the webcam, appends a full record to
+The server writes one JSON object per line to stdout: one line per request
+(method, path, status code, latency) and one per scan (status, cache, parse
+confidence, description status), each with the request ID. These lines never
+include the OCR text, keys or headers.
+
+Every scan, from the app or the webcam, also appends a full record to
 `logs/run_log.jsonl`: the OCR text, parsed fields, confidences, cache hit or
 miss, and the final spoken text. Low-confidence stages also go to
 `logs/warnings_log.jsonl`. These logs are how accuracy is scored by hand.

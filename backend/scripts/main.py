@@ -4,7 +4,8 @@ the same post-OCR pipeline the backend runs (pipeline.py). Useful for testing
 the backend logic without the phone.
 
 Run:
-    python -m scripts.main
+    python -m scripts.main                   captures are deleted after OCR
+    python -m scripts.main --save-captures   keep each capture in captures/
 
 Controls:
     SPACE  - capture frame and run the pipeline on it
@@ -13,8 +14,11 @@ Controls:
 Requires: run benchmark_ocr.py at least once first, so config/ocr_engine_choice.json
 exists (falls back to 'paddleocr' if missing, with a warning).
 """
+import argparse
 import json
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -51,7 +55,24 @@ def process_frame(image_path: str, engine_name: str, cache: CacheStore) -> None:
     speak(result["spoken_text"])
 
 
+def capture_path(save_captures: bool) -> str:
+    """Where to write the next frame: captures/ if kept, else a temp file."""
+    if save_captures:
+        capture_dir = Path("captures")
+        capture_dir.mkdir(exist_ok=True)
+        return str(capture_dir / f"capture_{int(time.time())}.jpg")
+    fd, path = tempfile.mkstemp(prefix="medsight_capture_", suffix=".jpg")
+    os.close(fd)
+    return path
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Webcam test tool for the MedSight pipeline.")
+    parser.add_argument("--save-captures", action="store_true",
+                        help="keep every captured frame in captures/ (default: delete after OCR)")
+    args = parser.parse_args()
+
+    config.ensure_dirs()
     engine_name = load_ocr_engine_choice()
     print(f"Using OCR engine: {engine_name}")
     cache = CacheStore()
@@ -62,8 +83,6 @@ def main():
         sys.exit(1)
 
     print("Press SPACE to capture and identify, or 'q' to quit.")
-    capture_dir = Path("captures")
-    capture_dir.mkdir(exist_ok=True)
 
     try:
         while True:
@@ -78,13 +97,16 @@ def main():
             if key == ord("q"):
                 break
             elif key == ord(" "):
-                image_path = str(capture_dir / f"capture_{int(time.time())}.jpg")
+                image_path = capture_path(args.save_captures)
                 cv2.imwrite(image_path, frame)
                 print(f"\nCaptured {image_path}")
                 try:
                     process_frame(image_path, engine_name, cache)
                 except Exception as e:
                     print(f"Pipeline error: {e}")
+                finally:
+                    if not args.save_captures:
+                        Path(image_path).unlink(missing_ok=True)
                 print("\nPress SPACE to capture again, or 'q' to quit.")
     finally:
         cap.release()
