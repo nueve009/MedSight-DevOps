@@ -8,42 +8,48 @@
 
 ## Run the same checks on your laptop
 
-npm ci
-npm run lint
-npx tsc --noEmit
-
-## Numbers
-
-- First green run: 36s (CI #1)
-
-## Not done yet
-
-- No `build` or `test` script in the project
-- Branch protection on `main`
-- Deploy (CD)
-- Secrets and environments
-
-## Branch protection
-
-- `main` needs a pull request and the `test` check to pass before merging
-- Tested with a deliberately broken pull request (type error): check failed, merge was blocked
-
-## Dependabot
-
-- Checks npm packages and GitHub Actions once a week
-- Opens a pull request for each update, and the `test` check runs on it
-- Major version updates are ignored on purpose, because Expo SDK 57 expects specific versions
-- Config file: `.github/dependabot.yml`
-
-## Dependabot
-
-- Version updates are limited to GitHub Actions (`ci.yml`), checked weekly
-- App packages are left to the team, because Expo SDK 57 expects specific versions and CI cannot test the running app
-- Security alerts and security updates stay on for all packages
-- Config file: `.github/dependabot.yml`
+    npm ci
+    npm run lint
+    npx tsc --noEmit
 
 ## Safety settings in ci.yml
 
 - `permissions: contents: read` so the pipeline can only read the code
 - `concurrency` with cancel-in-progress, so an old run stops when a newer push arrives
-- `timeout-minutes: 10` so a stuck job is stopped (a normal run takes about 25 to 35 seconds)
+- `timeout-minutes: 10` so a stuck job is stopped
+
+## Branch protection
+
+- `main` needs a pull request and the `test` check to pass before merging
+- Force pushes are blocked, and the bypass list is empty
+- Tested with a deliberately broken pull request (type error):ss the check failed and the merge was blocked
+
+## Environments and secrets
+
+- `staging`: no rules
+- `production`: required reviewer, only `main` can deploy, admin bypass turned off
+- Secrets are stored per environment in GitHub, never in the code
+
+## Security tools
+
+- Dependabot version updates: GitHub Actions only, checked weekly (`.github/dependabot.yml`)
+- App packages are left to the team, because Expo SDK 57 expects specific versions and CI cannot test the running app
+- Dependabot security alerts, secret scanning, and CodeQL code scanning are on
+- CodeQL is not a required check
+
+## Numbers
+
+- First green run: 36s (CI #1)
+- Pull request run: about 32s
+- Run on `main` after the safety lines were added: 25s (CI #31)
+
+## Known problems
+
+- Dependabot shows 6 alerts (1 critical, 3 high, 2 moderate) on `package-lock.json`. This repo has not been synced with the team repo yet, so the list will be re-checked after the sync
+- No `build` or `test` script in the project, so CI checks style and types only
+
+## Not done yet
+
+- Sync with the team repo (`upstream`)
+- Automatic code review (CodeRabbit)
+- Deploy (CD)
