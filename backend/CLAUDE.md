@@ -30,8 +30,8 @@ python -m scripts.kb_build                                # validate + build dat
 python -m scripts.kb_make_scans sorted_output/packaging   # draft eval scans from images
 ```
 
-`kb/` holds the hand-curated, two-person-checked dataset of the 10 supported
-medicines. `kb/README.md` explains how it's collected. **Never add or edit
+`kb/` holds the hand-curated, two-person-checked ("reviewed") dataset of the
+supported medicines. `kb/README.md` explains how it's collected. **Never add or edit
 rows in `kb/*.csv` yourself.** Every value must come from the team's box
 photos and FDA portal lookups. Use fake data in a temp folder for tests. The
 FDA portal must not be scraped or automated.
@@ -43,61 +43,72 @@ paths at a temp folder. Fake `kb/` datasets come from
 `tests/fixtures/fake_kb.py`, never from the real `kb/`. Every bug fix starts
 with a test that fails on the old code. To try the real model by hand, use
 `TestClient` with `LLM_PROVIDER=ollama`, or call one stage directly, e.g.
-`llm_parse.parse_medicine_text(text)`.
+`llm_parse.parse_label(text)`. Realistic OCR texts and parse replies for tests
+are in `tests/fixtures/labels.py`.
 
 ## Architecture
 
-The phone does OCR and TTS. `app/api.py` receives the text and calls
-`pipeline.identify(raw_text, ocr_confidence, cache, meta)`, which runs
-everything after OCR and returns the response dict, including `spoken_text`.
-`scripts/main.py` is the local test tool: it runs OCR on a webcam capture
-(`scripts/ocr_engines.py`) and calls the same `identify()`.
+The phone does OCR and TTS. `app/api.py` receives the text: `/v2/identify`
+calls `pipeline.identify_scan(ScanRequest, cache)`, and the v1 `/identify`
+calls `pipeline.identify()`, an adapter that runs the same pipeline and maps
+the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
+`pipeline.py` only orchestrates; each step is its own module:
 
-1. **OCR confidence.** The client computes it. When it's `None`, the check is
-   skipped and logged as `ocr_confidence_skipped`; it is not treated as 0.
-2. **Parse** (`llm_parse`). The LLM call goes through `llm_client.chat()`.
-   After parsing, an anti-hallucination check caps confidence at 0.3 if
-   neither extracted name fuzzily appears in the OCR text. Empty fields come
-   back as `None`, not `""`. If the reply is invalid JSON, every field is
-   empty, and `identify()` returns `rescan`.
-3. **Cache** (`cache_store.CacheStore`, SQLite at `MEDSIGHT_DATA_DIR`). The
-   key is `utils.normalize_key(generic, brand, dosage)`: a 16-character
-   sha256 of the normalized *parsed* fields, not the raw OCR text.
-   `utils.normalize_strength` makes "500 mg", "500mg" and "500 MG" one key.
-   Each call opens and closes its own connection because FastAPI runs
-   requests on several threads. The cache is created at app startup
-   (`app.state.cache`), not on import.
-4. **Describe** (`description_agent`). This only runs on a cache miss. It
-   returns a `status`: `ok`, `not_recognized` or `failed`. Only `ok` results
-   are cached, so a temporary LLM error isn't repeated on later scans. Until
-   retrieval from `kb/` is built, it generates a general description from the
-   model's memory, returns `grounded=False`, and caps confidence at
-   `MAX_CONFIDENCE = 0.6`. The team decided (2026-10-08) that medicines
-   outside the 10 verified ones keep getting this unverified description;
-   they are not refused.
-   - For ungrounded results, `pipeline.identify()` speaks `UNVERIFIED_WARNING`
-     **before** the description and ends with `UNVERIFIED_ADVICE`.
-   - It adds `"not verified"` to `warnings`.
-   - It does *not* count the capped description confidence as a
-     low-confidence stage, so `status` only reflects how well the label was
-     read (OCR and parse).
-5. **Status and speech.** `confidence_handler.check_confidence()` is "log,
-   don't block". It logs a warning line, appends to `warnings_log.jsonl`,
-   and returns True when the stage is low. The only hard stops (`status: "rescan"`) are no text and no parsed
-   name. The server builds `spoken_text` so the caveats are worded the same
-   on every platform.
+1. **Input checks** (`scan_rules.input_reason`). No letters → `no_text`; more
+   than `MAX_PARSE_CHARS` → `too_much_text`. Both are rescans with no LLM call.
+2. **Raw-text parse cache** (`CacheStore.get_parse`), keyed by
+   `utils.raw_text_key` (normalized OCR text + model + `PARSE_PROMPT_VERSION`).
+   Bump `PARSE_PROMPT_VERSION` whenever the parse prompt or schema changes.
+   Only valid, non-empty parses are cached.
+3. **Parse** (`llm_parse.parse_label`). Returns every product in view as
+   `ParsedProduct(brand, generics, strengths)`; strengths are paired with
+   generics by position, `""` = unreadable. The OCR text goes in
+   `<ocr_text>` fences (`utils.fence_untrusted`). The reply is checked for
+   types and caps (`MAX_PRODUCTS`, `MAX_INGREDIENTS`, name lengths, an
+   ingredient that looks like a strength); any failure is `valid=False` →
+   rescan `no_name`. The model's own confidence is logged, never used to decide.
+4. **Scan rules** (`scan_rules.decide`, pure functions). Hard rescans: no
+   product, a name or strength number not in the OCR text
+   (`name_not_in_text` / `strength_unread`), strengths that don't pair with
+   ingredients. Then `multiple` (two brands, two strengths of one brand, or an
+   unbranded product with other ingredients; `blocks` heights drop small-print
+   mentions). From attempt `MAX_SCAN_ATTEMPTS` a rescan becomes `gave_up`.
+   An answer is `ok_caveat` when the phone's OCR confidence is below
+   `OCR_CAVEAT_THRESHOLD` (`None` = skipped, not 0). `partial_match_reason()`
+   is ready for M2's dataset match.
+5. **Answer cache** (`CacheStore.get_answer`), keyed by `utils.answer_key`:
+   brand + every (ingredient, strength) pair, sorted, with strengths
+   normalized (`utils.normalize_strength`: "500 mg" = "500mg" = "500 MG").
+   A combination never shares a key with one of its ingredients.
+6. **Describe** (`description_agent.get_description`, the `general` tier),
+   only on a cache miss. `status` is `ok`, `not_recognized` or `failed`; a
+   reply with a dose or schedule (`utils.contains_dosing`) or over 300
+   characters is `failed`. Only `ok` is cached. The team decided
+   (2026-10-08) that medicines outside the reviewed dataset still get this
+   warned description; they are not refused.
+7. **Speech** (`speech.py`). Every spoken string lives here, with snapshot
+   tests in `tests/test_speech.py`. Order: name and strength, prescription
+   line, tier line (the warning comes **before** the description), the
+   description, the reading caveat, the pharmacist advice. Team-checked
+   answers are called **"reviewed"**, never "verified" (decision 2026-10-20);
+   v1 keeps its old `"not verified"` warning value for older app builds.
+
+Cache errors never fail a scan (`pipeline._cache_call` logs and carries on).
 
 **LLM provider** (`app/llm_client.py`):
 - **Groq:** calls the OpenAI-compatible `/chat/completions` endpoint with
   `response_format: json_object`. JSON mode doesn't enforce field names, so
   the schema is also appended to the system prompt.
-- **Ollama:** passes the schema in `format`, which enforces it.
+- **Ollama:** passes the schema in `format`, which enforces it, and
+  `think: false`, without which thinking models (qwen3.5) return empty content.
 - **Errors:** both raise `LLMUnavailableError` for unreachable services, rate
-  limits and bad keys. `app/api.py` maps it to a 503 with a spoken retry message.
+  limits, timeouts (`LLM_TIMEOUT_S`, Groq) and bad keys. `app/api.py` maps it
+  to a 503 with a spoken retry message and the request ID.
 
 **Auth** (`api.require_api_key`): checks the `X-API-Key` header against
 `MEDSIGHT_API_KEY` using a constant-time comparison. If the server key isn't
-set, it fails closed with a 503.
+set, it fails closed with a 503. `BodySizeLimitMiddleware` refuses bodies
+over 64 KB with 413, with or without a Content-Length.
 
 **Logs** (`app/logging_setup.py`): server code uses `logging`, never
 `print`. Each line is one JSON object on stdout, with the request's ID

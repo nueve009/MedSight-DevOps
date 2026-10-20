@@ -52,7 +52,7 @@ def _chat_groq(system: str, user: str, schema: dict | None, max_tokens: int) -> 
             f"{config.GROQ_BASE_URL}/chat/completions",
             headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
             json=payload,
-            timeout=60,
+            timeout=config.LLM_TIMEOUT_S,
         )
     except requests.RequestException as e:
         raise LLMUnavailableError(f"Can't reach Groq: {e}") from e
@@ -76,6 +76,10 @@ def _chat_ollama(system: str, user: str, schema: dict | None, max_tokens: int) -
         # Ollama constrains output to the schema itself (much more reliable for
         # small models); otherwise it just forces valid JSON.
         "format": schema if schema else "json",
+        # Thinking models (e.g. qwen3.5) would otherwise spend the whole token
+        # budget on hidden reasoning and return empty content. Models without
+        # thinking ignore the flag.
+        "think": False,
         "options": {"temperature": 0, "num_predict": max_tokens},
     }
     try:

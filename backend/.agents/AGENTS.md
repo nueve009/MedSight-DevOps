@@ -35,10 +35,12 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `scripts/main.py` - Local webcam prototype (local OCR, then `app/pipeline.py`)
 - `app/config.py` - Configuration and settings
 - `scripts/ocr_engines.py` - OCR processing (local prototype only)
-- `app/llm_parse.py` - LLM parsing of OCR text into brand/generic/dosage
+- `app/llm_parse.py` - LLM parsing of OCR text into every product in view
+  (brand, ingredients, strengths)
+- `app/scan_rules.py` - Rescan / multiple / give-up / caveat rules (pure functions)
+- `app/speech.py` - Every spoken sentence, in a fixed order
 - `app/llm_client.py` - LLM client: Groq (default) or local Ollama
 - `app/description_agent.py` - Medicine description generation
-- `app/confidence_handler.py` - Confidence evaluation
 - `app/cache_store.py` - SQLite cache used by the pipeline
 - `app/logging_setup.py` - JSON logs on stdout, request IDs
 - `tests/` - pytest suite (LLM always faked); `tests/fixtures/` holds fake data
@@ -76,17 +78,18 @@ folders; code that writes to one creates it when it writes
 This tool is used by people who cannot visually double-check its output, so
 a confident wrong answer is dangerous.
 
-1. Never guess a medicine name, brand, or dosage when OCR or parse
-   confidence is low. Defer to `app/confidence_handler.py` and tell the user to
-   rescan instead.
+1. Never guess a medicine name, brand, or dosage when the label wasn't read
+   clearly. Defer to `app/scan_rules.py` and tell the user to rescan instead.
 2. Never silently fill in a missing or unreadable name, dosage, or field.
-3. Descriptions of the 10 verified medicines must come only from the
+3. Descriptions of the reviewed medicines must come only from the
    two-person-checked text in `kb/`. Any other medicine may get a general,
-   LLM-generated description, but only behind the spoken unverified warning,
-   which comes **before** the description, and with `grounded: false`. That
-   description must not include dosing advice, and must say "I don't
-   recognize this product" rather than guess.
-4. Never present an unverified description as confirmed fact.
+   LLM-generated description, but only behind the spoken "isn't in our
+   reviewed list" warning (`app/speech.py`), which comes **before** the
+   description, and never with `tier: "reviewed"` (v1: `grounded: false`).
+   That description must not include dosing advice (also enforced in code),
+   and must say "I don't recognize this product" rather than guess.
+4. Never present an unreviewed description as confirmed fact. User-facing
+   text says "reviewed", not "verified" (team decision, 2026-10-20).
 5. If the grounding source or confidence behavior is unclear, say so rather
    than assuming.
 

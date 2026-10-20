@@ -51,8 +51,23 @@ def isolated_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "KB_DB_PATH", data_dir / "kb.sqlite")
     monkeypatch.setattr(config, "LOGS_DIR", logs_dir)
     monkeypatch.setattr(config, "RUN_LOG_PATH", logs_dir / "run_log.jsonl")
-    monkeypatch.setattr(config, "WARNINGS_LOG_PATH", logs_dir / "warnings_log.jsonl")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def default_settings(monkeypatch):
+    """Tests don't depend on whatever a developer's .env sets."""
+    monkeypatch.setattr(config, "LLM_PROVIDER", "groq")
+    monkeypatch.setattr(config, "GROQ_MODEL", "test-model")
+    monkeypatch.setattr(config, "OCR_CAVEAT_THRESHOLD", 0.55)
+    monkeypatch.setattr(config, "MAX_SCAN_ATTEMPTS", 3)
+    monkeypatch.setattr(config, "MAX_PARSE_CHARS", 2000)
+
+
+@pytest.fixture
+def cache(tmp_path):
+    from app.cache_store import CacheStore
+    return CacheStore(tmp_path / "cache.sqlite")
 
 
 @pytest.fixture(autouse=True)
