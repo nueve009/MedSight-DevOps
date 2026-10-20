@@ -7,52 +7,51 @@ from pathlib import Path
 import pytest
 
 from app import description_agent, llm_parse
-from app.cache_store import CacheStore
-from app.pipeline import identify
-from app.utils import normalize_key
+from app.llm_parse import ParsedProduct
+from app.pipeline import ScanRequest, identify_scan
+from app.utils import answer_key
+from tests.fixtures import labels
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-
-BIOGESIC_PARSE = {"generic_name": "Paracetamol", "brand_name": "Biogesic",
-                  "dosage": "500 mg", "confidence": 0.95}
+BIOGESIC = ParsedProduct("Biogesic", ("Paracetamol",), ("500 mg",))
 
 
-@pytest.mark.parametrize("dosage", ["500mg", "500 MG", " 500  mg ", "500 Mg"])
-def test_normalize_key_ignores_unit_spacing_and_case(dosage):
-    assert normalize_key("Paracetamol", "Biogesic", dosage) == normalize_key("Paracetamol", "Biogesic", "500 mg")
+@pytest.mark.parametrize("strength", ["500mg", "500 MG", " 500  mg ", "500 Mg"])
+def test_answer_key_ignores_unit_spacing_and_case(strength):
+    assert answer_key("Biogesic", ["Paracetamol"], [strength]) == answer_key("Biogesic", ["Paracetamol"], ["500 mg"])
 
 
-def test_normalize_key_keeps_different_strengths_apart():
-    assert normalize_key("Paracetamol", "Biogesic", "500 mg") != normalize_key("Paracetamol", "Biogesic", "50 mg")
-    assert normalize_key("Paracetamol", "Biogesic", "500 mg") != normalize_key("Paracetamol", "Biogesic", "500 mcg")
+def test_answer_key_keeps_different_strengths_apart():
+    key = answer_key("Biogesic", ["Paracetamol"], ["500 mg"])
+    assert key != answer_key("Biogesic", ["Paracetamol"], ["50 mg"])
+    assert key != answer_key("Biogesic", ["Paracetamol"], ["500 mcg"])
 
 
-def test_failed_description_is_not_cached(fake_llm, tmp_path):
-    cache = CacheStore(tmp_path / "cache.sqlite")
-    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, BIOGESIC_PARSE)
+def test_failed_description_is_not_cached(fake_llm, cache):
+    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, labels.reply(labels.BIOGESIC))
     fake_llm.reply(description_agent.DESCRIPTION_SYSTEM_PROMPT, "not json at all")
 
-    first = identify("BIOGESIC\nParacetamol 500 mg", 0.9, cache)
+    first = identify_scan(ScanRequest(labels.BIOGESIC_TEXT, ocr_confidence=0.9), cache)
     assert first["cache"] == "miss"
-    assert cache.get(normalize_key("Paracetamol", "Biogesic", "500 mg")) is None
+    assert cache.get_answer(answer_key("Biogesic", ["Paracetamol"], ["500 mg"])) is None
 
     # The provider recovers: the next scan must generate a description again.
-    fake_llm.reply(description_agent.DESCRIPTION_SYSTEM_PROMPT,
-                   {"description": "A pain reliever and fever reducer.", "confidence": 0.5})
-    second = identify("BIOGESIC\nParacetamol 500 mg", 0.9, cache)
+    fake_llm.reply(description_agent.DESCRIPTION_SYSTEM_PROMPT, labels.GOOD_DESCRIPTION)
+    second = identify_scan(ScanRequest(labels.BIOGESIC_TEXT, ocr_confidence=0.9), cache)
     assert second["cache"] == "miss"
     assert second["description"] == "A pain reliever and fever reducer."
     assert fake_llm.count(description_agent.DESCRIPTION_SYSTEM_PROMPT) == 2
 
 
-def test_good_description_is_cached(fake_llm, tmp_path):
-    cache = CacheStore(tmp_path / "cache.sqlite")
-    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, BIOGESIC_PARSE)
-    fake_llm.reply(description_agent.DESCRIPTION_SYSTEM_PROMPT,
-                   {"description": "A pain reliever and fever reducer.", "confidence": 0.5})
+def test_good_description_is_cached(fake_llm, cache):
+    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, labels.reply(labels.BIOGESIC))
+    fake_llm.reply(description_agent.DESCRIPTION_SYSTEM_PROMPT, labels.GOOD_DESCRIPTION)
 
-    assert identify("BIOGESIC\nParacetamol 500 mg", 0.9, cache)["cache"] == "miss"
-    assert identify("BIOGESIC\nParacetamol 500mg", 0.9, cache)["cache"] == "hit"
+    assert identify_scan(ScanRequest(labels.BIOGESIC_TEXT), cache)["cache"] == "miss"
+    # A different photo of the same box: the strength now reads "500mg".
+    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT,
+                   labels.reply(labels.product("Biogesic", ["Paracetamol"], ["500mg"])))
+    assert identify_scan(ScanRequest(labels.BIOGESIC_TEXT + "\nLot 123"), cache)["cache"] == "hit"
     assert fake_llm.count(description_agent.DESCRIPTION_SYSTEM_PROMPT) == 1
 
 
@@ -64,7 +63,7 @@ def test_good_description_is_cached(fake_llm, tmp_path):
 ])
 def test_description_status(fake_llm, reply, status):
     fake_llm.reply(description_agent.DESCRIPTION_SYSTEM_PROMPT, reply)
-    assert description_agent.get_description("Paracetamol", "Biogesic", "500 mg")["status"] == status
+    assert description_agent.get_description(BIOGESIC)["status"] == status
 
 
 def test_importing_config_creates_no_folders(tmp_path):

@@ -28,7 +28,6 @@ KB_DIR = BASE_DIR / "kb"
 KB_DB_PATH = DATA_DIR / "kb.sqlite"
 LOGS_DIR = Path(os.environ.get("MEDSIGHT_LOGS_DIR", BASE_DIR / "logs"))
 RUN_LOG_PATH = LOGS_DIR / "run_log.jsonl"
-WARNINGS_LOG_PATH = LOGS_DIR / "warnings_log.jsonl"
 OCR_ENGINE_CHOICE_PATH = BASE_DIR / "config" / "ocr_engine_choice.json"
 BENCHMARK_RESULTS_PATH = BASE_DIR / "config" / "ocr_benchmark_results.json"
 
@@ -51,16 +50,27 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
 GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+# A scan shouldn't hang on a slow provider; past this the user hears "try again".
+LLM_TIMEOUT_S = float(os.environ.get("LLM_TIMEOUT_S", "15"))
 
 # --- Backend API ---
 # Shared secret the mobile app sends in the X-API-Key header. If unset, the
 # API refuses every /identify request rather than running open.
 MEDSIGHT_API_KEY = os.environ.get("MEDSIGHT_API_KEY", "")
-MAX_OCR_TEXT_CHARS = 5000  # bounds LLM cost per request
+MAX_BODY_BYTES = 64 * 1024     # whole request body; larger gets 413
+MAX_OCR_TEXT_CHARS = 5000      # request validation; longer gets 422
+MAX_BLOCKS = 500               # text blocks per request; more gets 422
+# Input check before any model call: longer text is a rescan ("move closer"),
+# so a whole page of small print can't run up parse cost.
+MAX_PARSE_CHARS = int(os.environ.get("MAX_PARSE_CHARS", "2000"))
 
-# --- Confidence handling ---
-# OCR/parse confidence is normalized to 0.0-1.0 before this check.
-LOW_CONFIDENCE_THRESHOLD = float(os.environ.get("LOW_CONFIDENCE_THRESHOLD", "0.55"))
-
-# --- Cache ---
-# Cache key = normalized hash of generic_name + brand_name + dosage (see utils.py)
+# --- Scan rules (scan_rules.py) ---
+# Below this OCR confidence (0-1, from the phone) an answer gets the spoken
+# "I'm not fully sure of this reading" caveat. A starting guess: set it from
+# the team's labeled scans (open decision 3). LOW_CONFIDENCE_THRESHOLD is the
+# old name and still read.
+OCR_CAVEAT_THRESHOLD = float(os.environ.get("OCR_CAVEAT_THRESHOLD",
+                                            os.environ.get("LOW_CONFIDENCE_THRESHOLD", "0.55")))
+# From this attempt on, a scan that would be a rescan "gives up" and says
+# only what was read clearly, so the user isn't stuck rescanning.
+MAX_SCAN_ATTEMPTS = int(os.environ.get("MAX_SCAN_ATTEMPTS", "3"))

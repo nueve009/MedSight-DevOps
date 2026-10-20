@@ -1,4 +1,5 @@
-"""Shared helpers: strength and cache-key normalization, and JSONL logging."""
+"""Shared helpers: text and strength normalization, cache keys, prompt fencing,
+the dosing check, and JSONL logging."""
 import hashlib
 import json
 import re
@@ -23,14 +24,50 @@ def normalize_strength(s: str) -> str:
     return s
 
 
-def normalize_key(generic_name: str, brand_name: str, dosage: str) -> str:
+def _hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def answer_key(brand: str | None, generics, strengths) -> str:
+    """Answer-cache key: the brand plus every (ingredient, strength) pair, sorted.
+
+    Never one ingredient alone, so a combination (Alaxan FR: ibuprofen +
+    paracetamol) can never share an answer with a single-ingredient product
+    (Biogesic: paracetamol).
     """
-    Cache key: a 16-character sha256 of the normalized generic name, brand
-    name and dosage. Repeat photos of the same product won't OCR identically,
-    so we key on the *parsed* fields, not raw OCR text.
-    """
-    combined = f"{clean_text(generic_name)}|{clean_text(brand_name)}|{normalize_strength(dosage)}"
-    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
+    pairs = sorted(f"{clean_text(g)}={normalize_strength(s)}" for g, s in zip(generics, strengths, strict=True))
+    return _hash(f"{clean_text(brand or '')}|{'+'.join(pairs)}")
+
+
+def raw_text_key(text: str, model: str, prompt_version: str) -> str:
+    """Parse-cache key: the normalized OCR text plus the model and prompt that read it."""
+    return _hash(f"{model}|{prompt_version}|{clean_text(text)}")
+
+
+def hash_device_id(device_id: str | None) -> str | None:
+    """Device IDs are only ever logged or stored hashed."""
+    return _hash(f"device|{device_id}") if device_id else None
+
+
+def fence_untrusted(text: str, tag: str) -> str:
+    """Wrap untrusted text (OCR, fetched pages) in <tag>...</tag> for a prompt.
+    Any copy of the tag inside the text is removed, so it can't close the fence early."""
+    cleaned = re.sub(rf"</?\s*{re.escape(tag)}\s*>", " ", text, flags=re.IGNORECASE)
+    return f"<{tag}>\n{cleaned}\n</{tag}>"
+
+
+# A description must never tell someone how much to take or how often.
+_DOSING_PATTERNS = [
+    re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|µg|g|ml|iu|units?|tablets?|tabs?|capsules?|caps?|"
+               r"teaspoons?|tsp|tablespoons?|tbsp|drops?|puffs?|sachets?)\b", re.IGNORECASE),
+    re.compile(r"\bevery\s+\d+\s*(?:to\s+\d+\s*)?(?:hours?|hrs?)\b", re.IGNORECASE),
+    re.compile(r"\b(?:once|twice|thrice|\d+\s+times)\s+(?:a|per|each)\s+day\b", re.IGNORECASE),
+    re.compile(r"\b(?:daily|maximum|max\.?|recommended)\s+dose\b", re.IGNORECASE),
+]
+
+
+def contains_dosing(text: str) -> bool:
+    return any(p.search(text or "") for p in _DOSING_PATTERNS)
 
 
 def append_jsonl(path: Path, record: dict) -> None:

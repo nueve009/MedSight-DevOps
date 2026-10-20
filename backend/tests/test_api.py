@@ -9,11 +9,11 @@ from app import config, description_agent, llm_parse
 from app.api import app
 from app.llm_client import LLMUnavailableError
 from app.logging_setup import JsonFormatter, request_id_var
+from tests.fixtures import labels
 
 API_KEY = "test-key"
 HEADERS = {"X-API-Key": API_KEY}
-BIOGESIC_PARSE = {"generic_name": "Paracetamol", "brand_name": "Biogesic",
-                  "dosage": "500 mg", "confidence": 0.95}
+BIOGESIC_PARSE = labels.reply(labels.BIOGESIC)
 
 
 @pytest.fixture
@@ -62,8 +62,82 @@ def test_identify_ok(client, fake_llm):
     assert body["status"] == "ok"
     assert body["brand_name"] == "Biogesic"
     assert body["grounded"] is False
-    # The unverified warning comes before the description.
-    assert body["spoken_text"].index("not in my verified list") < body["spoken_text"].index("pain reliever")
+    assert body["warnings"] == ["not verified"]
+    # The warning comes before the description.
+    assert body["spoken_text"].index("isn't in our reviewed list") < body["spoken_text"].index("pain reliever")
+
+
+# --- v2 ---
+
+def test_v2_answer_shape(client, fake_llm):
+    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, BIOGESIC_PARSE)
+    fake_llm.reply(description_agent.DESCRIPTION_SYSTEM_PROMPT, labels.GOOD_DESCRIPTION)
+    resp = client.post("/v2/identify", headers={**HEADERS, "X-Device-Id": "3f2a-device", "X-Request-Id": "r-1"},
+                       json={"text": labels.BIOGESIC_TEXT, "ocr_confidence": 0.9, "attempt": 1,
+                             "blocks": [{"text": "BIOGESIC", "confidence": 0.93, "box": [0.1, 0.3, 0.5, 0.4]}],
+                             "capture_hints": {"blurry": False, "dark": False, "text_small": False},
+                             "platform": "android", "app_version": "1.2.0"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "status": "ok", "rescan_reason": None, "hint": None, "tier": "general",
+        "product": {"brand": "Biogesic", "generics": ["Paracetamol"], "strengths": ["500 mg"],
+                    "prescription": False},
+        "description": "A pain reliever and fever reducer.", "sources": [],
+        "spoken_text": body["spoken_text"], "request_id": "r-1", "cache": "miss",
+    }
+
+
+def test_v2_text_falls_back_to_blocks(client, fake_llm):
+    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, labels.reply(labels.BIOGESIC, labels.ADVIL))
+    blocks = [{"text": line} for line in labels.TWO_BOXES_TEXT.split("\n")]
+    body = client.post("/v2/identify", json={"blocks": blocks}, headers=HEADERS).json()
+    assert body["status"] == "multiple"
+
+
+def test_v2_rescan_with_hint(client, fake_llm):
+    body = client.post("/v2/identify", json={"text": "", "capture_hints": {"dark": True}}, headers=HEADERS).json()
+    assert (body["status"], body["rescan_reason"], body["hint"]) == ("rescan", "no_text", "more_light")
+    assert fake_llm.calls == []
+
+
+@pytest.mark.parametrize("body", [
+    {"blocks": [{"text": "x"}] * (config.MAX_BLOCKS + 1)},
+    {"text": "a" * (config.MAX_OCR_TEXT_CHARS + 1)},
+    {"text": "BIOGESIC", "attempt": 0},
+    {"text": "BIOGESIC", "ocr_confidence": 1.5},
+    {"text": "BIOGESIC", "blocks": [{"text": "x", "box": [0.1, 0.2]}]},
+])
+def test_v2_rejects_invalid_requests(client, body):
+    assert client.post("/v2/identify", json=body, headers=HEADERS).status_code == 422
+
+
+def test_v2_requires_key(client):
+    assert client.post("/v2/identify", json={"text": "x"}).status_code == 401
+
+
+def test_body_over_limit_is_413_with_request_id(client):
+    resp = client.post("/v2/identify", content=b'{"text": "' + b"a" * config.MAX_BODY_BYTES + b'"}',
+                       headers={**HEADERS, "Content-Type": "application/json"})
+    assert resp.status_code == 413
+    assert resp.headers["X-Request-Id"]
+
+
+def test_body_over_limit_without_content_length_is_413(client):
+    def chunks():
+        yield b'{"text": "'
+        for _ in range(70):
+            yield b"a" * 1024
+        yield b'"}'
+    resp = client.post("/v2/identify", content=chunks(), headers={**HEADERS, "Content-Type": "application/json"})
+    assert resp.status_code == 413
+
+
+def test_v2_503_carries_request_id(client, fake_llm):
+    fake_llm.raise_error(llm_parse.PARSE_SYSTEM_PROMPT, LLMUnavailableError("down"))
+    resp = client.post("/v2/identify", json={"text": "BIOGESIC"}, headers={**HEADERS, "X-Request-Id": "r-9"})
+    assert resp.status_code == 503
+    assert resp.json()["request_id"] == "r-9"
 
 
 def test_llm_down_returns_503_with_spoken_text(client, fake_llm):

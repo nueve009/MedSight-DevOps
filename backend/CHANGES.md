@@ -5,6 +5,101 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-10-20 — M1: parse v2, scan rules, contract v2
+
+**Branch:** `backend/m1-parse-scan-rules` (on top of M0).
+
+**Decision (2026-10-20):** team-checked answers are called **"reviewed"**,
+not "verified" (replaces decision 2 in `docs/project-status-and-decisions.md`,
+which still says "verified"). Wording now in `app/speech.py`:
+- reviewed tier: "Our team has reviewed this information."
+- ingredient tier (open decision 2): "Our team hasn't reviewed this product
+  yet. Based on its ingredients, ..." This was chosen over "This still needs
+  a review", which could sound like the listener has to do something.
+- web tier: "This medicine isn't in our reviewed list. The following
+  information comes from the web and hasn't been reviewed by our team."
+- v1 keeps `grounded` and the `"not verified"` warning value for older app
+  builds; only its spoken text changed.
+
+**Added**
+- `llm_parse.parse_label()`: every product in view, each with
+  `generics[]` and `strengths[]` paired by position. The OCR text is fenced in
+  `<ocr_text>` tags (a copy of the tag inside the text is removed). The
+  reply is checked for types and caps (5 products, 8 ingredients, 80/40
+  characters, no ingredient that looks like a strength); any failure is a
+  rescan. `PARSE_PROMPT_VERSION = "2"`.
+- `scan_rules.py`: pure functions for input checks, name/strength-in-text,
+  several medicines (with block heights to ignore small print),
+  strength pairing, `partial_match_reason()` for M2, hints, retry limit
+  (`gave_up` from attempt 3) and the OCR caveat. The model's own confidence
+  no longer decides anything.
+- `speech.py`: every spoken string, in the plan's fixed order, with
+  strengths spoken in words ("500 milligrams") and names in their printed case.
+- `POST /v2/identify` (contract in `README.md`): `blocks`, `attempt`,
+  `capture_hints`, `X-Device-Id` (hashed), new statuses, `rescan_reason`,
+  `hint`, `tier`, `product`, `sources`, `request_id`. **Additions to the plan's
+  contract:** tier `general` (the model-knowledge fallback, which the plan
+  had no value for) and reason `too_much_text`.
+- Raw-text parse cache (approved 2026-10-19) and an answer cache keyed on brand
+  + every (ingredient, strength) pair (`utils.answer_key`); `CacheStore` now
+  has `parses` and `answers` tables. Cache errors fail open.
+- Security items for M1 (plan section 7, items 3 and 10): a 64 KB body limit
+  (413, also without Content-Length); a 500-block cap; a Groq timeout of 15 s
+  (`LLM_TIMEOUT_S`); input checks before any model call (no letters, or over
+  `MAX_PARSE_CHARS` = 2000).
+- Code-enforced no-dosing gate on general descriptions (`utils.contains_dosing`)
+  and a 300-character cap. Either one makes the result `failed`, not spoken
+  as is and not cached.
+- Ollama calls send `think: false`; without it `qwen3.5:4b` returned empty
+  content (hidden reasoning used up the token budget).
+
+**Changed:** `/identify` (v1) is now an adapter over the v2 pipeline:
+`ok_caveat` → `low_confidence`, `multiple`/`gave_up` → `rescan`, combination
+ingredients joined with " + ".
+**Removed:** `confidence_handler.py`, `warnings_log.jsonl`,
+`utils.normalize_key`, the `medicines` cache table (old SQLite files keep
+it, unused). `LOW_CONFIDENCE_THRESHOLD` is still read as the fallback for
+`OCR_CAVEAT_THRESHOLD`.
+
+**Verified**
+- `pytest`: 158 passed (each scan rule on realistic labels, the "every pair
+  that shares an ingredient" key tests, speech snapshots, the v1 adapter, 413
+  and 422 cases). `ruff` is clean.
+- Real local models through `parse_label` + `scan_rules`, on 8 labels:
+  Biogesic, NEOZEP Forte (3 ingredients), Alaxan FR, two boxes, an "also
+  available" mention, an injection label, garbled text, and foil with no
+  strength.
+  - `llama3.2:3b` (2 runs) and `qwen3.5:4b` (2 runs): all 3 NEOZEP
+    ingredients paired correctly, two boxes → `multiple`, the "also
+    available" mention ignored, garbled → rescan.
+  - Injection label: `llama3.2` put "500 mg" in the ingredient slot (now
+    rejected by the reply checks). `qwen3.5` invented "Paracetamol" for
+    "ZORBAXIL", which was caught as `name_not_in_text`. Neither was answered.
+- End to end on `/v2/identify` with `qwen3.5:4b`: general answer with the
+  warning first, cache hit with `ok_caveat`, NEOZEP with all three
+  strengths spoken, and `gave_up` on foil with no strength at attempt 3.
+- **Not verified:** Groq (no `GROQ_API_KEY` on this machine).
+
+**Open items**
+1. **General tier can still be confidently wrong.** `qwen3.5:4b` described the
+   made-up "ZORBAXIL / Fakeamol 250 mg" as "a pain reliever and fever
+   reducer" instead of "I don't recognize this product". It is spoken behind
+   the warning, but re-check the prompt on Groq's `qwen/qwen3.8-27b` (which
+   said "I don't recognize" on 2026-10-08) before release, and don't use a
+   small local model for this tier.
+2. **Contract v2 needs the mobile team's agreement** before merge, including
+   the `general` tier, `too_much_text`, and resetting `attempt` after an answer
+   or `gave_up`.
+3. `MAX_PARSE_CHARS = 2000` makes a whole package insert a rescan. Check it
+   against real phone scans.
+4. `SMALL_PRINT_RATIO` (0.4) and `OCR_CAVEAT_THRESHOLD` (0.55) are guesses;
+   set them from labeled scans (M2).
+5. A brand-only read (foil showing only "BIOGESIC") is answered by the general
+   tier. In M2, a brand that matches the dataset without a strength becomes
+   `strength_unread`.
+
+---
+
 ## 2026-10-20 — M0: foundations (tests, logging, defect fixes)
 
 **Branch:** `backend/m0-foundations`. First milestone of

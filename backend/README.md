@@ -8,13 +8,15 @@ the packaging.
   the phone (Apple Vision on iOS, Google ML Kit on Android), sends the text to
   this backend, and speaks the reply with `expo-speech`. No photos leave the
   phone.
-- **Backend** (this folder, FastAPI): parses the brand, generic name and dosage
-  with an LLM, checks confidence, serves repeat scans from a cache, writes a
-  short description, and returns the exact text to speak.
+- **Backend** (this folder, FastAPI): reads every product in the text with an
+  LLM (brand, every active ingredient and its strength), applies the scan
+  rules (rescan, several medicines, give up), serves repeat scans from a
+  cache, writes a short description, and returns the exact text to speak.
 
 ```
-phone OCR → POST /identify → parse (LLM) → confidence check → cache (SQLite)
-          → description (LLM, on a cache miss) → spoken_text → phone TTS
+phone OCR → POST /v2/identify → input checks → parse (LLM, raw-text cache)
+          → scan rules → answer cache → description (LLM, on a miss)
+          → spoken_text → phone TTS
 ```
 
 ## Folder structure
@@ -26,7 +28,7 @@ mobile app. Run every command below from inside `backend/`.
 backend/
 ├── app/        the server: what the cloud host runs (uvicorn app.api:app)
 ├── scripts/    laptop-only tools: webcam prototype, OCR benchmark, dataset builders
-├── kb/         the verified medicine dataset (CSV files)
+├── kb/         the reviewed medicine dataset (CSV files)
 ├── tests/      pytest suite; the LLM is always faked
 ├── ops/        CI workflow and other files the DevOps engineer moves into place
 ├── requirements.txt         server packages (pinned)
@@ -68,8 +70,11 @@ pyttsx3.
 | `GROQ_API_KEY` | — | Groq API key |
 | `GROQ_MODEL` | `qwen/qwen3.8-27b` | Any Groq chat model that supports JSON mode |
 | `OLLAMA_HOST` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.2:3b` | Used when `LLM_PROVIDER=ollama` |
-| `MEDSIGHT_API_KEY` | — | Shared secret the app sends as `X-API-Key`. If unset, `/identify` refuses every request. |
-| `LOW_CONFIDENCE_THRESHOLD` | `0.55` | Any stage below this gets a spoken caveat |
+| `LLM_TIMEOUT_S` | `15` | Groq request timeout; past it the user hears "try again" |
+| `MEDSIGHT_API_KEY` | — | Shared secret the app sends as `X-API-Key`. If unset, both identify routes refuse every request. |
+| `MAX_PARSE_CHARS` | `2000` | Longer OCR text is a rescan ("move closer") with no LLM call |
+| `OCR_CAVEAT_THRESHOLD` | `0.55` | Below this OCR confidence an answer gets "I'm not fully sure of this reading". Old name `LOW_CONFIDENCE_THRESHOLD` still works. |
+| `MAX_SCAN_ATTEMPTS` | `3` | From this attempt on, a rescan becomes `gave_up` |
 | `MEDSIGHT_DATA_DIR` / `MEDSIGHT_LOGS_DIR` | `data/` / `logs/` | Point at a persistent disk on the cloud host |
 | `LOG_LEVEL` | `INFO` | Level for the JSON logs on stdout |
 
@@ -82,9 +87,104 @@ uvicorn app.api:app --host 0.0.0.0 --port $PORT  # cloud host
 
 Interactive API docs are served at `/docs`.
 
-## API contract (for the mobile team)
+## API contract v2 (for the mobile team)
 
-`POST /identify`, with header `X-API-Key: <MEDSIGHT_API_KEY>`.
+> **Status:** built on branch `backend/m1-parse-scan-rules`, **not yet agreed
+> with the mobile team.** v1 (below) keeps working unchanged in shape.
+
+`POST /v2/identify`, with headers:
+- `X-API-Key`: the app key
+- `X-Device-Id`: a random UUID the app creates at install (optional for now;
+  M4 rate limits use it). Stored and logged only as a hash.
+- `X-Request-Id`: optional; see "Request IDs" below
+
+```json
+{
+  "text": "BIOGESIC\nParacetamol 500 mg ...",
+  "blocks": [{"text": "BIOGESIC", "confidence": 0.93, "box": [0.12, 0.30, 0.55, 0.38]}],
+  "ocr_confidence": 0.88,
+  "attempt": 1,
+  "capture_hints": {"blurry": false, "dark": false, "text_small": false},
+  "platform": "android",
+  "app_version": "1.2.0"
+}
+```
+
+- `text`: all recognized text joined with newlines (max 5000 characters). If
+  it's empty, the server joins the `blocks` texts.
+- `blocks` (max 500): each OCR text block, with its position `box` as
+  fractions of the image (left, top, right, bottom). Optional, but it helps
+  the server tell two boxes in view from small print like "also available".
+- `ocr_confidence`: send `null` if the platform doesn't report one; the
+  caveat check is then skipped, not treated as 0.
+- `attempt`: counts rescans of the **same item**, starting at 1. Reset it to 1
+  when the user scans something new or after an answer.
+- `capture_hints`: what the phone could tell about the picture. It picks the
+  rescan hint ("find more light", "move closer").
+
+Response (200):
+
+```json
+{
+  "status": "ok | ok_caveat | rescan | multiple | gave_up",
+  "rescan_reason": "no_text | too_much_text | no_name | name_not_in_text | strength_unread | ingredients_incomplete | null",
+  "hint": "move_closer | more_light | turn_box | null",
+  "tier": "reviewed | ingredient | web | general | null",
+  "product": {"brand": "Biogesic", "generics": ["Paracetamol"], "strengths": ["500 mg"], "prescription": false},
+  "description": "A pain reliever and fever reducer.",
+  "sources": [],
+  "spoken_text": "Biogesic, Paracetamol 500 milligrams. Warning: ...",
+  "request_id": "7f3c...",
+  "cache": "hit | miss | null"
+}
+```
+
+- **Always speak `spoken_text` exactly as sent.** It already holds every
+  warning, in the right order.
+- `status`:
+  - `ok`: answered.
+  - `ok_caveat`: answered, but the phone's OCR confidence was low; the spoken
+    text adds "I'm not fully sure of this reading."
+  - `rescan`: ask the user to scan again. `rescan_reason` says why and `hint`
+    what to do (`turn_box`: scan the side with the ingredients list).
+  - `multiple`: two different brands, or two strengths of one brand, are in
+    view. The user hears "I can see more than one medicine. Please set the
+    others aside and scan one at a time."
+  - `gave_up`: sent instead of `rescan` from attempt 3 on, saying only what
+    was read clearly, e.g. "I can read Biogesic but not the strength. Please
+    ask someone to check the label." Reset `attempt` after it.
+- `product` and `tier` are `null` unless `status` is `ok` or `ok_caveat`.
+  `generics` and `strengths` are paired by position (a combination product
+  lists every ingredient).
+- `tier`: where the description comes from. The spoken text says it, before
+  the description:
+
+  | Tier | Source | Spoken before the description |
+  |---|---|---|
+  | `reviewed` | the team-reviewed dataset in `kb/` (from M2) | "Our team has reviewed this information." |
+  | `ingredient` | team-reviewed ingredient descriptions (from M2) | "Our team hasn't reviewed this product yet. Based on its ingredients, ..." |
+  | `web` | allow-listed web search (from M6) | "This medicine isn't in our reviewed list. The following information comes from the web and hasn't been reviewed by our team." |
+  | `general` | the model's general knowledge (today's only tier) | "Warning: this medicine isn't in our reviewed list, so this is general information only and may be inaccurate." |
+
+  Consider a distinct sound or vibration for anything other than `reviewed`.
+  `product.prescription` and "This is a prescription medicine" come with
+  `reviewed` answers from M2.
+
+Other responses (both versions):
+- **401:** missing or wrong API key.
+- **413:** request body over 64 KB.
+- **422:** invalid body: text over 5000 characters, more than 500 blocks, a
+  `box` without 4 numbers, `attempt` below 1, a confidence outside 0–1.
+- **503:** the LLM is busy or down (for example, the Groq rate limit or a
+  15-second timeout), or the server's API key isn't configured. When the LLM
+  is the cause, the body is `{"status": "service_unavailable", "spoken_text":
+  ..., "request_id": ...}`.
+
+## API contract v1
+
+`POST /identify`, with header `X-API-Key`. Kept until every active app build
+uses v2. Since M1 it runs the same pipeline as v2, so its answers follow the
+same scan rules; only the shape is v1.
 
 ```json
 {
@@ -97,49 +197,28 @@ Interactive API docs are served at `/docs`.
 }
 ```
 
-- `text` is all recognized text, joined with newlines (max 5000 characters).
-  If it's empty, the server joins `lines` instead.
-- `ocr_confidence` is optional. Send `null` if the OCR library doesn't report
-  one; the server then skips the OCR confidence check rather than treating it
-  as 0.
-
 Response (200):
 
 ```json
 {
   "status": "ok | low_confidence | rescan",
-  "brand_name": "Biogesic", "generic_name": "Paracetamol", "dosage": "500mg",
+  "brand_name": "Biogesic", "generic_name": "Paracetamol", "dosage": "500 mg",
   "description": "A pain reliever and fever reducer.",
   "grounded": false, "source_url": null,
   "warnings": ["not verified"],
-  "spoken_text": "Biogesic. Warning: this medicine is not in my verified list, ...",
+  "spoken_text": "Biogesic, Paracetamol 500 milligrams. Warning: ...",
   "cache": "hit | miss | null"
 }
 ```
 
-- **Always speak `spoken_text` exactly as sent.** It already includes the
-  safety caveats.
-- `rescan`: no text was read, or no medicine name was found. All name fields
-  are `null`, and `spoken_text` asks the user to try again.
-- `low_confidence`: the label may have been misread, because at least one
-  reading stage (OCR, name extraction) was below the threshold. `warnings`
-  lists which ones.
-- `grounded`: whether the description comes from the verified dataset.
-  - `true`: one of the 10 verified medicines.
-  - `false`: any other medicine. The description is general AI-generated
-    information, `warnings` includes `"not verified"`, and `spoken_text`
-    gives the unverified warning **before** the description. It ends by
-    advising the user to check the label or ask a pharmacist. Consider a
-    distinct sound or vibration for these results.
-- `status` and `grounded` are independent. For example, a clearly read
-  medicine outside the verified list is `"ok"` with `grounded: false`.
-
-Other responses:
-- **401:** missing or wrong API key.
-- **422:** the request body is invalid.
-- **503:** the LLM is busy or down (for example, the Groq rate limit), or the
-  server's API key isn't configured. When the LLM is the cause, the body
-  includes a `spoken_text` asking the user to retry.
+- v2 `ok` → `ok`; `ok_caveat` → `low_confidence` with `"OCR"` in `warnings`;
+  `rescan`, `multiple` and `gave_up` → `rescan` with every name field `null`
+  and the v2 spoken text.
+- Combination products join their ingredients and strengths with `" + "`,
+  e.g. `"generic_name": "Ibuprofen + Paracetamol"`, `"dosage": "200 mg + 325 mg"`.
+- `grounded` is `true` only for the `reviewed` tier; otherwise `warnings`
+  includes `"not verified"` (the value is unchanged for older app builds,
+  although the spoken text now says "reviewed").
 
 `GET /health` returns `{"status": "ok", "llm_provider": "..."}`.
 
@@ -168,20 +247,21 @@ There's no OCR ground truth in this dataset, so spot-check the results.
 ## Logs
 
 The server writes one JSON object per line to stdout: one line per request
-(method, path, status code, latency) and one per scan (status, cache, parse
-confidence, description status), each with the request ID. These lines never
-include the OCR text, keys or headers.
+(method, path, status code, latency) and one per scan (status, rescan
+reason, hint, tier, both caches, attempt, product count, stage latencies,
+hashed device ID), each with the request ID. These lines never include the
+OCR text, keys or headers.
 
 Every scan, from the app or the webcam, also appends a full record to
-`logs/run_log.jsonl`: the OCR text, parsed fields, confidences, cache hit or
-miss, and the final spoken text. Low-confidence stages also go to
-`logs/warnings_log.jsonl`. These logs are how accuracy is scored by hand.
+`logs/run_log.jsonl`, including the OCR text and the parse. It's for local
+accuracy checks; M3 replaces it on the server with a `scan_log` table that
+drops OCR text after 30 days.
 
 ## Known limitations
 
-- **Verified answers aren't wired in yet.** The verified dataset for 10
-  medicines is being collected (see `kb/README.md`). Until the retrieval step
-  is built, every medicine gets the unverified, general description, with
-  its spoken warning.
-- The confidence threshold is a starting guess. Tune it from real run logs.
+- **Reviewed answers aren't wired in yet.** The reviewed dataset is being
+  collected (see `kb/README.md`). Until retrieval is built (M2), every
+  medicine gets the `general` tier, with its spoken warning.
+- The OCR-confidence cut-off and the small-print ratio for `multiple` are
+  starting guesses. Set them from the team's labeled scans.
 - Not built: smart-glasses integration, shape/color classification.

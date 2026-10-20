@@ -1,167 +1,195 @@
 """
-Everything after OCR: parse -> confidence check -> cache -> description ->
-spoken text. Shared by the FastAPI backend (api.py), which gets OCR text from
-the phone, and the local webcam prototype (main.py), which runs OCR itself.
+Everything after OCR, in order. Orchestration only: each step lives in its
+own module.
 
-identify() returns the API response shape:
-    status       "ok" | "low_confidence" | "rescan"
-    brand_name / generic_name / dosage   (None when not read)
-    description, grounded, source_url
-    warnings     stages that need a caveat (e.g. "name extraction"), plus
-                 "not verified" when the description isn't grounded
-    spoken_text  exactly what the client should read aloud
-    cache        "hit" | "miss" | None
+    input checks (scan_rules)      no letters / too much text -> rescan, no model call
+    raw-text parse cache           the same label again costs no LLM call
+    parse (llm_parse)              every product, ingredients and strengths
+    scan rules (scan_rules)        rescan / multiple / gave_up / ok / ok_caveat
+    answer cache                   keyed on brand + every ingredient and strength
+    description (description_agent, "general" tier, on a cache miss)
+    spoken text (speech)
+
+identify_scan() returns the API v2 response (without request_id).
+identify() is the v1 adapter: the same pipeline, mapped to the v1 shape so
+older app builds keep working.
+
+Cache problems never fail a scan (rule 4 of the plan): a failed read is a
+miss and a failed write is skipped, both logged.
 """
 import logging
-from typing import Optional
+import time
+from dataclasses import dataclass, field
+from typing import Callable, Optional
 
-from app import config
+from app import config, scan_rules, speech
 from app.cache_store import CacheStore
-from app.confidence_handler import build_spoken_caveat, check_confidence
 from app.description_agent import get_description
-from app.llm_parse import parse_medicine_text
-from app.utils import append_jsonl, normalize_key
-
-NO_TEXT_MESSAGE = ("I couldn't read any text on that packaging. "
-                   "Please try again with better lighting or a closer shot.")
-NO_NAME_MESSAGE = "I read some text but couldn't identify a medicine name from it. Please try again."
-# Spoken for any medicine outside the verified dataset (description not grounded).
-UNVERIFIED_WARNING = ("Warning: this medicine is not in my verified list, so this is general "
-                      "information only and may be inaccurate.")
-UNVERIFIED_ADVICE = "Please check the label or ask a pharmacist before taking it."
+from app.llm_parse import PARSE_PROMPT_VERSION, ParsedProduct, ParseResult, parse_label
+from app.scan_rules import Block, CaptureHints, Decision
+from app.utils import answer_key, append_jsonl, raw_text_key
 
 log = logging.getLogger(__name__)
 
-
-def _log_scan(run_record: dict) -> None:
-    """One stdout line per scan. No OCR text: that stays in the local run log."""
-    parsed = run_record.get("parsed") or {}
-    desc = run_record.get("description_result") or {}
-    log.info("scan", extra={"fields": {
-        "outcome": run_record.get("outcome"),
-        "status": run_record.get("status", "rescan"),
-        "cache": run_record.get("cache"),
-        "parse_confidence": parsed.get("confidence"),
-        "description_status": desc.get("status"),
-        "platform": run_record.get("platform"),
-        "app_version": run_record.get("app_version"),
-    }})
+ANSWER_STATUSES = ("ok", "ok_caveat")
 
 
-def _rescan(message: str, run_record: dict, outcome: str) -> dict:
-    run_record["outcome"] = outcome
-    run_record["final_spoken_text"] = message
-    append_jsonl(config.RUN_LOG_PATH, run_record)
-    _log_scan(run_record)
+@dataclass
+class ScanRequest:
+    text: str
+    blocks: list[Block] = field(default_factory=list)
+    ocr_confidence: Optional[float] = None
+    attempt: int = 1
+    hints: CaptureHints = field(default_factory=CaptureHints)
+    meta: dict = field(default_factory=dict)   # client, platform, app_version, device (hashed)
+
+
+def _model_name() -> str:
+    return config.GROQ_MODEL if config.LLM_PROVIDER == "groq" else f"{config.LLM_PROVIDER}:{config.OLLAMA_MODEL}"
+
+
+def _cache_call(action: str, fn: Callable, *args):
+    try:
+        return fn(*args)
+    except Exception as e:  # any cache error must fail open
+        log.warning("cache error", extra={"fields": {"action": action, "error_class": type(e).__name__}})
+        return None
+
+
+def _parse(text: str, cache: CacheStore, record: dict) -> ParseResult:
+    key = raw_text_key(text, _model_name(), PARSE_PROMPT_VERSION)
+    cached = _cache_call("get_parse", cache.get_parse, key)
+    if cached is not None:
+        record["parse_cache"] = "hit"
+        return ParseResult.from_dict(cached)
+
+    record["parse_cache"] = "miss"
+    started = time.perf_counter()
+    result = parse_label(text)
+    record["parse_ms"] = round((time.perf_counter() - started) * 1000)
+    # Only a usable parse is cached; an empty or invalid one is tried again.
+    if result.valid and result.products:
+        _cache_call("set_parse", cache.set_parse, key, result.to_dict())
+    return result
+
+
+def _product_json(product: ParsedProduct, prescription: bool = False) -> dict:
+    return {"brand": product.brand, "generics": list(product.generics),
+            "strengths": list(product.strengths), "prescription": prescription}
+
+
+def _response(decision: Decision, spoken_text: str, **answer) -> dict:
     return {
-        "status": "rescan",
-        "brand_name": None, "generic_name": None, "dosage": None,
-        "description": None, "grounded": False, "source_url": None,
-        "warnings": [], "spoken_text": message, "cache": None,
+        "status": decision.status,
+        "rescan_reason": decision.reason,
+        "hint": decision.hint,
+        "tier": answer.get("tier"),
+        "product": answer.get("product"),
+        "description": answer.get("description"),
+        "sources": answer.get("sources", []),
+        "spoken_text": spoken_text,
+        "cache": answer.get("cache"),
     }
+
+
+def _no_answer(decision: Decision) -> dict:
+    if decision.status == "multiple":
+        spoken = speech.MULTIPLE
+    elif decision.status == "gave_up":
+        spoken = speech.gave_up(decision.reason, decision.product)
+    else:
+        spoken = speech.rescan(decision.reason, decision.hint, decision.product)
+    return _response(decision, spoken)
+
+
+def _answer(decision: Decision, cache: CacheStore, record: dict) -> dict:
+    product = decision.product
+    # (M2: match against the reviewed dataset in kb/ goes here, before the general tier.)
+    key = answer_key(product.brand, product.generics, product.strengths)
+    cached = _cache_call("get_answer", cache.get_answer, key)
+    if cached:
+        tier, description, sources, cache_status = cached["tier"], cached["description"], cached["sources"], "hit"
+    else:
+        started = time.perf_counter()
+        result = get_description(product)
+        record["describe_ms"] = round((time.perf_counter() - started) * 1000)
+        record["description_status"] = result["status"]
+        tier, description, sources, cache_status = speech.GENERAL, result["description"], [], "miss"
+        if result["status"] == "ok":
+            _cache_call("set_answer", cache.set_answer, key, tier, product.to_dict(), description, sources)
+
+    spoken = speech.answer(product, tier, description, caveat=decision.status == "ok_caveat")
+    return _response(decision, spoken, tier=tier, product=_product_json(product),
+                     description=description, sources=sources, cache=cache_status)
+
+
+def _finish(record: dict, response: dict, started: float) -> dict:
+    record.update({k: response[k] for k in ("status", "rescan_reason", "hint", "tier", "cache")})
+    record["final_spoken_text"] = response["spoken_text"]
+    append_jsonl(config.RUN_LOG_PATH, record)
+    # One stdout line per scan. No OCR text: that stays in the local run log.
+    log.info("scan", extra={"fields": {
+        **{k: record.get(k) for k in ("status", "rescan_reason", "hint", "tier", "cache", "parse_cache",
+                                       "attempt", "product_count", "parse_confidence", "description_status",
+                                       "parse_ms", "describe_ms", "client", "platform", "app_version", "device")},
+        "latency_ms": round((time.perf_counter() - started) * 1000),
+    }})
+    return response
+
+
+def identify_scan(req: ScanRequest, cache: CacheStore) -> dict:
+    """Run the post-OCR pipeline. Raises llm_client.LLMUnavailableError if the LLM can't be reached."""
+    started = time.perf_counter()
+    record = {**req.meta, "raw_ocr_text": req.text, "ocr_confidence": req.ocr_confidence, "attempt": req.attempt}
+    if req.ocr_confidence is None:
+        record["ocr_confidence_skipped"] = True
+
+    reason = scan_rules.input_reason(req.text)
+    if reason:
+        return _finish(record, _no_answer(scan_rules.rescan(reason, req.hints, req.attempt)), started)
+
+    parse = _parse(req.text, cache, record)
+    record["parsed"] = parse.to_dict()
+    record["parse_confidence"] = parse.confidence
+    record["product_count"] = len(parse.products)
+    if not parse.valid:
+        decision = scan_rules.rescan(scan_rules.NO_NAME, req.hints, req.attempt)
+    else:
+        decision = scan_rules.decide(parse.products, req.text, req.blocks, req.attempt, req.hints,
+                                     req.ocr_confidence)
+
+    if decision.status in ANSWER_STATUSES:
+        return _finish(record, _answer(decision, cache, record), started)
+    return _finish(record, _no_answer(decision), started)
+
+
+# --- v1 adapter ---
+
+V1_NOT_VERIFIED = "not verified"   # v1 warning value; kept as is for older app builds
 
 
 def identify(raw_text: str, ocr_confidence: Optional[float], cache: CacheStore,
              meta: Optional[dict] = None) -> dict:
-    """Run the post-OCR pipeline on text read from medicine packaging.
+    """POST /identify (v1). Same pipeline as v2, mapped to the v1 response shape:
+    ok -> ok, ok_caveat -> low_confidence, everything else -> rescan."""
+    r = identify_scan(ScanRequest(text=raw_text, ocr_confidence=ocr_confidence, meta=meta or {}), cache)
+    if r["status"] not in ANSWER_STATUSES:
+        return {"status": "rescan", "brand_name": None, "generic_name": None, "dosage": None,
+                "description": None, "grounded": False, "source_url": None, "warnings": [],
+                "spoken_text": r["spoken_text"], "cache": None}
 
-    ocr_confidence may be None when the client's OCR doesn't report one; the
-    OCR confidence check is then skipped (and logged as skipped), not failed.
-    Raises llm_client.LLMUnavailableError if the LLM can't be reached.
-    """
-    run_record = {**(meta or {}), "raw_ocr_text": raw_text, "ocr_confidence": ocr_confidence}
-    low_stages = []
-
-    # 1. OCR confidence (computed by the caller)
-    if ocr_confidence is None:
-        run_record["ocr_confidence_skipped"] = True
-    elif check_confidence("ocr", ocr_confidence, {"meta": meta}):
-        low_stages.append("OCR")
-
-    if not raw_text.strip():
-        return _rescan(NO_TEXT_MESSAGE, run_record, "no_text_detected")
-
-    # 2. LLM parse
-    parsed = parse_medicine_text(raw_text)
-    run_record["parsed"] = parsed
-    if check_confidence("parse", parsed.get("confidence", 0.0), {"parsed": parsed}):
-        low_stages.append("name extraction")
-
-    generic_name = parsed.get("generic_name")
-    brand_name = parsed.get("brand_name")
-    dosage = parsed.get("dosage")
-
-    if not generic_name and not brand_name:
-        return _rescan(NO_NAME_MESSAGE, run_record, "parse_failed")
-
-    # 3. Cache lookup, or 4. description agent on a miss
-    cache_key = normalize_key(generic_name or "", brand_name or "", dosage or "")
-    cached = cache.get(cache_key)
-
-    if cached:
-        description = cached.get("description", "")
-        grounded = cached.get("grounded", False)
-        source_url = cached.get("source_url")
-        desc_confidence = cached.get("confidence", 0.0)
-        cache_status = "hit"
-    else:
-        desc_result = get_description(generic_name or "", brand_name or "", dosage or "")
-        description = desc_result["description"]
-        grounded = desc_result["grounded"]
-        source_url = desc_result.get("source_url")
-        desc_confidence = desc_result["confidence"]
-        # Only a usable description is cached; a failed or "don't recognize"
-        # reply is tried again on the next scan.
-        if desc_result["status"] == "ok":
-            cache.set(
-                cache_key=cache_key,
-                generic_name=generic_name or "",
-                brand_name=brand_name or "",
-                dosage=dosage or "",
-                description=description,
-                grounded=grounded,
-                source_url=source_url,
-                confidence=desc_confidence,
-            )
-        run_record["description_result"] = desc_result
-        cache_status = "miss"
-    run_record["cache"] = cache_status
-
-    # An unverified description's confidence is capped below most thresholds,
-    # and the unverified warning already covers it, so only a grounded
-    # description adds a low-confidence stage. Status reflects how well the
-    # label was read; grounded says whether the information is verified.
-    desc_is_low = check_confidence("description", desc_confidence, {"cache_key": cache_key})
-    if grounded and desc_is_low:
-        low_stages.append("description")
-    status = "low_confidence" if low_stages else "ok"
-
-    # 5. Spoken output
-    label = brand_name or generic_name
-    # TTS needs the sentence break before the caveat; models often drop it.
-    spoken_description = description if description.endswith((".", "!", "?")) else f"{description}."
-    if grounded:
-        spoken = f"{label}. {spoken_description} {build_spoken_caveat(low_stages)}"
-    else:
-        # Warn before the description, not after: a listener may stop early.
-        # build_spoken_caveat ends with its own "double-check" advice, which
-        # would repeat UNVERIFIED_ADVICE, so name the shaky stages directly.
-        reading_caveat = (f"I'm also not fully confident in this reading: "
-                          f"{', '.join(low_stages)} confidence was low. ") if low_stages else ""
-        spoken = (f"{label}. {UNVERIFIED_WARNING} {spoken_description} "
-                  f"{reading_caveat}{UNVERIFIED_ADVICE}")
-    spoken = spoken.strip()
-    warnings = low_stages if grounded else [*low_stages, "not verified"]
-
-    run_record["outcome"] = "success"
-    run_record["status"] = status
-    run_record["final_spoken_text"] = spoken
-    append_jsonl(config.RUN_LOG_PATH, run_record)
-    _log_scan(run_record)
-
+    product = r["product"]
+    reviewed = r["tier"] == speech.REVIEWED
+    warnings = (["OCR"] if r["status"] == "ok_caveat" else []) + ([] if reviewed else [V1_NOT_VERIFIED])
     return {
-        "status": status,
-        "brand_name": brand_name, "generic_name": generic_name, "dosage": dosage,
-        "description": description, "grounded": grounded, "source_url": source_url,
-        "warnings": warnings, "spoken_text": spoken, "cache": cache_status,
+        "status": "ok" if r["status"] == "ok" else "low_confidence",
+        "brand_name": product["brand"],
+        "generic_name": " + ".join(product["generics"]) or None,
+        "dosage": " + ".join(product["strengths"]) or None,
+        "description": r["description"],
+        "grounded": reviewed,
+        "source_url": r["sources"][0] if r["sources"] else None,
+        "warnings": warnings,
+        "spoken_text": r["spoken_text"],
+        "cache": r["cache"],
     }
