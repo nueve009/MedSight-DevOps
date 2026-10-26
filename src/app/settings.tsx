@@ -105,7 +105,7 @@ export default function SettingsScreen() {
         <ListRow
           label={messages.settings.voice}
           value={voice?.label ?? messages.settings.voiceDefault}
-          onPress={() => router.push("/voice")}
+          onPress={() => router.push("/voice" as any)}
           accessibilityHint={messages.settings.voiceHint}
         />
 
