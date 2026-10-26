@@ -36,6 +36,7 @@
 - App packages are left to the team, because Expo SDK 57 expects specific versions and CI cannot test the running app
 - Dependabot security alerts, secret scanning, and CodeQL code scanning are on
 - CodeQL is not a required check
+- AI scan for pull request (Github Settings)
 
 ## Numbers
 
