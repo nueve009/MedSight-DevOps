@@ -17,8 +17,8 @@ Design mockups: `Sample UI/MedSight Screens.pdf`.
 - Result reads its data from route params (`status`: `verified` / `notVerified` / `unreadable`, `name`, `strength`, optional `form`, `onList`, `doseNote`, `spokenText`). It speaks the backend's `spokenText` when present. "Verified" shows only when the backend says the label was read clearly **and** the medicine is in its verified dataset.
 - Offline also shows server problems (`reason=server` param): different words and a warning icon.
 - Settings live in `SettingsContext` (**in memory only, reset on restart**). Speech speed and Voice are used by `useSpeech`. Vibration and High contrast are stored but nothing reads them yet.
-- **History and My medicines are real, stored on the phone** (`src/services/db.ts`, expo-sqlite). Every scan is saved to History (newest 50). On My medicines a caregiver can add a medicine (name + optional dose note) and remove one (with a confirmation). Settings shows the real saved count. When a scanned medicine's name matches a saved one, Result gets `onList` and the dose note.
-- Backend: separate repo (`MedSight-Backend`, FastAPI). `POST /identify` takes OCR text and returns the identification plus `spoken_text`. Its verified dataset is still empty, so the real backend currently answers "not verified" for every medicine. It has no endpoints for History or My medicines yet.
+- **History and My medicines are stored in Supabase** (`src/services/db.ts` + `src/services/supabase.ts`). Every scan is saved remotely (newest 50 per device). On My medicines a caregiver can add a medicine (name + optional dose note) and remove one (with a confirmation). Settings shows the real saved count. When a scanned medicine's name matches a saved one, Result gets `onList` and the dose note. Each install is identified by a stable UUID stored in AsyncStorage (`@medsight/device_id`).
+- Backend: separate repo (`MedSight-Backend`, FastAPI). `POST /identify` takes OCR text and returns the identification plus `spoken_text`. Its verified dataset is still empty, so the real backend currently answers "not verified" for every medicine.
 
 ## Reusable building blocks — use these, don't make new ones
 
@@ -77,8 +77,8 @@ Design mockups: `Sample UI/MedSight Screens.pdf`.
 | 3 | Settings + feedback: `ToggleRow`, `SegmentedControl`, `SettingsContext`, speech | 🟡 In progress (components, context and `useSpeech` done; haptics via `feedback.ts` respecting Vibration, saving settings, and High contrast still to do) |
 | 4 | Scan → Checking → Result (mock API) | 🟡 In progress (flow connected through `api.ts` with mock and real modes, tested against the real backend; live camera added; photo capture and OCR still to do) |
 | 5 | Offline + errors | 🟡 In progress (Scan routes to Offline when there is no internet; network, timeout and server errors are handled; not yet tested against the real backend) |
-| 6 | History | 🟡 In progress (every scan is saved on the phone and listed; rows don't open the old result; must move to the backend API) |
-| 7 | My medicines (caregiver) | 🟡 In progress (add and remove work, stored on the phone; no editing; must move to the backend API) |
+| 6 | History | ✅ Done (scans saved to Supabase; newest 50 per device; rows listed newest-first) |
+| 7 | My medicines (caregiver) | ✅ Done (add and remove work, stored in Supabase; no editing yet) |
 | 8 | Polish | ⬜ Not started |
 | 9 | Real API | ⬜ Not started |
 
@@ -93,7 +93,7 @@ This plan was made before the CSP221A project guide. It still needs to be checke
 - Components: `AppText`, `Screen`, `Icon` + `iconPaths.ts`, `PrimaryButton`, `SecondaryButton`, `CornerButton`, `ScanFrame`, `GuidancePill`, `StatusBanner`, `InfoCard`, `ListRow`, `HistoryRow`, `ToggleRow`, `SegmentedControl`, `OptionRow`
 - `src/context/SettingsContext.tsx`, `src/hooks/useSpeech.ts`, `src/services/mockMedicines.ts`
 - `src/constants/messages.ts`: strings for all screens, including spoken text and accessibility hints
-- Setup: `expo-camera`, `expo-speech`, `expo-haptics`, `expo-sqlite`, `expo-image-manipulator`, `@react-native-community/netinfo`, `react-native-svg`, the Atkinson font package, and ESLint (`eslint.config.js`). `npx expo lint`, `npx tsc --noEmit` and `npx expo-doctor` passed at setup; re-run them before the next commit.
+- Setup: `expo-camera`, `expo-speech`, `expo-haptics`, `expo-sqlite`, `expo-image-manipulator`, `expo-crypto`, `@react-native-community/netinfo`, `@supabase/supabase-js`, `@react-native-async-storage/async-storage`, `react-native-svg`, the Atkinson font package, and ESLint (`eslint.config.js`). `npx expo lint`, `npx tsc --noEmit` and `npx expo-doctor` passed at setup; re-run them before the next commit.
 
 - Promo video (24 s, landscape, 3D iPhone model, generated music): a separate Remotion project in the sibling folder `MedSight-video` (not in this repo). The Scan screen is a picture; Checking and the two Result screens are redrawn as web components with values copied from `theme.ts` and `messages.ts`, so update the copies there if the app changes. Render with `npm run render`.
 
@@ -101,12 +101,12 @@ This plan was made before the CSP221A project guide. It still needs to be checke
 - (nothing)
 
 ## Up next
-- Test against the real backend: set `EXPO_PUBLIC_API_BASE_URL` in `.env.local` once it is running or deployed
+- **Supabase setup**: run the SQL in `supabase_schema.md` (via the Supabase dashboard SQL Editor), then add `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` to `.env.local` and restart the dev server
+- Test against the real FastAPI backend: set `EXPO_PUBLIC_API_BASE_URL` in `.env.local` once it is running or deployed
 - Take the photo on Scan and run real OCR inside `readLabelText()` in `src/services/ocr.ts` (needs a development build, not Expo Go)
 - Show the backend's medicine name and description on the Not verified screen? Today it is only spoken
 - `feedback.ts`: haptic patterns for verified / not verified, respecting the Vibration setting (the button haptics also ignore it today)
-- Save settings so they survive an app restart (expo-sqlite is installed); apply High contrast
-- Move History and My medicines from the phone (`db.ts`) to the backend: the course guide requires CRUD through the backend API. Needs new backend endpoints; then only the bodies of the functions in `db.ts` change
+- Save settings so they survive an app restart; apply High contrast
 - "Not on your list" warning on Result for a verified medicine that isn't saved (the list exists now)
 - Optional cleanup: add a `borderWidths` token (2, 3, 4 and 6 are hard-coded in components and screens) and move the repeated badge sizes (56 / 36) in `StatusBanner` and `HistoryRow` into `theme.ts`; add an `edges` option to `Screen` so the Result banner can fill the status bar area
 
