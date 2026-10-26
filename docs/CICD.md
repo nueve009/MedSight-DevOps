@@ -67,3 +67,10 @@
 - **Why this was safe:** the text is fixed app wording and the generated answer, printed by the local demo script.
 - **If it comes back:** open "Show paths" first. If the path carries only fixed app text, ask the author to rename the constant or dismiss it with a reason. If it carries real data (user input, keys, medicine records tied to a person), treat it as real and ask the author to fix the code.
 - **Note:** CodeQL is not a required check, so merges are not blocked automatically. A person has to look at its alerts.
+
+### 2026-10-26: Dependabot security update #31 (closed)
+
+- **What:** update of `expo-router` to 58.0.26 (Expo SDK 58) while the project is on SDK 57
+- **Result:** `CI / test` failed at `npm ci` with ERESOLVE (peer dependency conflict), so the required check blocked the merge
+- **Decision:** closed without merging, and reported to the app developers. Moving to SDK 58 is a team decision, not a single-package update
+- **Not used:** `--force` and `--legacy-peer-deps`, because they hide the conflict instead of fixing it
