@@ -10,12 +10,14 @@ the packaging.
   phone.
 - **Backend** (this folder, FastAPI): reads every product in the text with an
   LLM (brand, every active ingredient and its strength), applies the scan
-  rules (rescan, several medicines, give up), serves repeat scans from a
-  cache, writes a short description, and returns the exact text to speak.
+  rules (rescan, several medicines, give up), matches the label against the
+  team-reviewed dataset in `kb/`, falls back to a warned general description,
+  and returns the exact text to speak.
 
 ```
 phone OCR → POST /v2/identify → input checks → parse (LLM, raw-text cache)
-          → scan rules → answer cache → description (LLM, on a miss)
+          → scan rules → match kb/ (reviewed | partial → rescan | ingredient)
+          → otherwise answer cache → general description (LLM, on a miss)
           → spoken_text → phone TTS
 ```
 
@@ -146,7 +148,10 @@ Response (200):
   - `ok_caveat`: answered, but the phone's OCR confidence was low; the spoken
     text adds "I'm not fully sure of this reading."
   - `rescan`: ask the user to scan again. `rescan_reason` says why and `hint`
-    what to do (`turn_box`: scan the side with the ingredients list).
+    what to do (`turn_box`: scan the side with the ingredients list). A
+    brand in the reviewed list whose strength or ingredients don't fully
+    match is always a rescan, e.g. "I found Biogesic but couldn't read the
+    strength. Turn the box and scan the side with the ingredients."
   - `multiple`: two different brands, or two strengths of one brand, are in
     view. The user hears "I can see more than one medicine. Please set the
     others aside and scan one at a time."
@@ -161,14 +166,17 @@ Response (200):
 
   | Tier | Source | Spoken before the description |
   |---|---|---|
-  | `reviewed` | the team-reviewed dataset in `kb/` (from M2) | "Our team has reviewed this information." |
-  | `ingredient` | team-reviewed ingredient descriptions (from M2) | "Our team hasn't reviewed this product yet. Based on its ingredients, ..." |
+  | `reviewed` | the team-reviewed dataset in `kb/`: brand, every ingredient and strength matched | "Our team has reviewed this information." |
+  | `ingredient` | not a listed product, but every ingredient has a team-reviewed description | "Our team hasn't reviewed this product yet. Based on its ingredients, ..." |
   | `web` | allow-listed web search (from M6) | "This medicine isn't in our reviewed list. The following information comes from the web and hasn't been reviewed by our team." |
-  | `general` | the model's general knowledge (today's only tier) | "Warning: this medicine isn't in our reviewed list, so this is general information only and may be inaccurate." |
+  | `general` | the model's general knowledge (fallback) | "Warning: this medicine isn't in our reviewed list, so this is general information only and may be inaccurate." |
 
   Consider a distinct sound or vibration for anything other than `reviewed`.
-  `product.prescription` and "This is a prescription medicine" come with
-  `reviewed` answers from M2.
+  For `reviewed` answers, `product` holds the dataset's spelling (not the
+  OCR's), `sources` the source page URLs, and `product.prescription` is true
+  for prescription products, which are also spoken with "This is a
+  prescription medicine." `cache` is `null` for `reviewed` and `ingredient`
+  answers (they come from the dataset, not the cache).
 
 Other responses (both versions):
 - **401:** missing or wrong API key.
@@ -220,7 +228,22 @@ Response (200):
   includes `"not verified"` (the value is unchanged for older app builds,
   although the spoken text now says "reviewed").
 
-`GET /health` returns `{"status": "ok", "llm_provider": "..."}`.
+`GET /health` returns `{"status": "ok", "llm_provider": "...", "kb_version": "...", "kb_products": 29}`.
+`kb_version` is `null` and `kb_products` 0 when `data/kb.sqlite` hasn't been
+built: the service still runs, but every answer falls to the lower tiers.
+
+## Reviewed dataset
+
+`kb/` holds the team-reviewed medicines (`kb/README.md` has the workflow and
+columns). `python -m scripts.kb_build` validates it and builds
+`data/kb.sqlite`, which the backend loads at startup; the build is refused
+if any row breaks a rule. Tools for the team:
+
+```bash
+python -m scripts.kb_build --check [--kb-dir <folder>]   # validate
+python -m scripts.kb_draft_descriptions                  # LLM drafts of spoken descriptions → kb/staging/
+python -m scripts.eval_kb --out report.json              # labeled scans: must give 0 wrong reviewed answers
+```
 
 **Request IDs:** every response has an `X-Request-Id` header. The app may
 send its own `X-Request-Id` (up to 64 letters, digits, `.`, `_` or `-`) and
@@ -259,8 +282,8 @@ drops OCR text after 30 days.
 
 ## Known limitations
 
-- **Reviewed answers aren't wired in yet.** The reviewed dataset is being
-  collected (see `kb/README.md`). Until retrieval is built (M2), every
+- **The reviewed dataset is still empty.** Matching is built, but `kb/` has
+  no checked rows yet (see `kb/README.md`), so until the team adds them every
   medicine gets the `general` tier, with its spoken warning.
 - The OCR-confidence cut-off and the small-print ratio for `multiple` are
   starting guesses. Set them from the team's labeled scans.

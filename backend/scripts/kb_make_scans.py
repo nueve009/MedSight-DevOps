@@ -3,9 +3,10 @@ Draft evaluation scans for the verified dataset: runs local OCR over a folder
 of packaging images (one subfolder per product, as in sorted_output/packaging)
 and writes one JSON line per image to kb/eval/scans_draft.jsonl.
 
-The draft has "expected_product_id": null. A teammate fills it in with a
-product_id from kb/products.csv, or "unsupported" for medicines outside the
-10, then moves the reviewed lines into kb/eval/scans.jsonl.
+The draft has "expected": null. A teammate fills it in with a product_id
+from kb/products.csv, or "not_listed" (a medicine outside the dataset),
+"multiple" (more than one medicine in view) or "rescan" (unreadable), then
+moves the reviewed lines into kb/eval/scans.jsonl for scripts.eval_kb.
 
 Usage:
     python -m scripts.kb_make_scans sorted_output/packaging [--engine paddleocr]
@@ -47,10 +48,10 @@ def main() -> None:
                 "ocr_engine": args.engine,
                 "ocr_text": text,
                 "ocr_confidence": round(confidence, 4),
-                "expected_product_id": None,
+                "expected": None,
             }, ensure_ascii=False) + "\n")
 
-    print(f"\nWrote {DRAFT_PATH}. Fill in expected_product_id for each line, "
+    print(f"\nWrote {DRAFT_PATH}. Fill in 'expected' for each line, "
           f"then move reviewed lines into kb/eval/scans.jsonl.")
 
 

@@ -10,6 +10,7 @@ from app.api import app
 from app.llm_client import LLMUnavailableError
 from app.logging_setup import JsonFormatter, request_id_var
 from tests.fixtures import labels
+from tests.fixtures.fake_kb import build_kb
 
 API_KEY = "test-key"
 HEADERS = {"X-API-Key": API_KEY}
@@ -26,10 +27,42 @@ def client(monkeypatch):
     root.handlers, root.level = saved_handlers, saved_level
 
 
+@pytest.fixture
+def kb_client(monkeypatch, tmp_path):
+    """A client whose startup loads a fake reviewed dataset from kb.sqlite."""
+    build_kb(tmp_path / "built")
+    monkeypatch.setattr(config, "KB_DB_PATH", tmp_path / "built" / "kb.sqlite")
+    monkeypatch.setattr(config, "MEDSIGHT_API_KEY", API_KEY)
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    with TestClient(app) as c:
+        yield c
+    root.handlers, root.level = saved_handlers, saved_level
+
+
 def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
+    assert resp.json() == {"status": "ok", "llm_provider": "groq", "kb_version": None, "kb_products": 0}
+
+
+def test_health_reports_the_loaded_dataset(kb_client):
+    body = kb_client.get("/health").json()
+    assert body["kb_products"] == 7
+    assert len(body["kb_version"]) == 12
+
+
+def test_v2_reviewed_answer_without_internal_fields(kb_client, fake_llm):
+    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, BIOGESIC_PARSE)
+    body = kb_client.post("/v2/identify", json={"text": labels.BIOGESIC_TEXT}, headers=HEADERS).json()
+    assert (body["status"], body["tier"]) == ("ok", "reviewed")
+    assert "matched_product_id" not in body
+
+
+def test_v1_reviewed_answer_is_grounded(kb_client, fake_llm):
+    fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, BIOGESIC_PARSE)
+    body = kb_client.post("/identify", json={"text": labels.BIOGESIC_TEXT}, headers=HEADERS).json()
+    assert (body["status"], body["grounded"], body["warnings"]) == ("ok", True, [])
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong"}])

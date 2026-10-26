@@ -5,6 +5,111 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-10-27 — M2: reviewed dataset and matching (backend part)
+
+**Branch:** `backend/m2-dataset-matching` (from `main` after M1 was merged).
+
+**Decisions (2026-10-26):**
+- **TheFilipinoDoctor (TFD) is the dataset's text source** (`source_type: tfd`,
+  page URL in `source_ref`). **MIMS is dropped**: its drug directory needs an
+  account. This replaces decisions 1 and 3 in
+  `docs/project-status-and-decisions.md`, which still say MIMS.
+- The team's TFD scraper (`scripts/tfd_scrape.py` + its test) stays local
+  and is **not committed**. Its output goes to `kb/staging/`, now git-ignored.
+- OTC/Rx, registration number and expiry still come from the FDA portal by
+  hand; the website's "Non-Rx" labels are only hints.
+
+**Added**
+- `app/retrieval.py`: `KnowledgeBase` (loaded once from `data/kb.sqlite`;
+  missing file = empty dataset + a warning) and `match()`:
+  - `reviewed`: exact brand or alias, or a fuzzy brand at 0.85 or more,
+    **and** the same ingredient set and strengths after synonyms. Spoken
+    with the dataset's spelling, its `spoken_description`, and the
+    prescription line for `Rx`.
+  - `partial`: an exact listed brand whose ingredients or strengths
+    disagree. Becomes a rescan (`strength_unread` or
+    `ingredients_incomplete`, then `gave_up`). Never for a fuzzy brand, so
+    a near miss never names a listed brand.
+  - `ingredient`: every ingredient has a reviewed description.
+  - Several full matches with different descriptions or Rx status are not
+    answered as reviewed.
+- Pipeline: the dataset match runs after the scan rules. Reviewed and
+  ingredient answers never use the answer cache or an LLM, so they beat a
+  stale general answer cached earlier. `/health` adds `kb_version` and
+  `kb_products`; the scan log adds `match`, `matched_product_id` and
+  `kb_version`.
+- `kb_build.py`:
+  - new columns: products `spoken_description`, `description_checked_by`;
+    ingredients `spoken_description`, `source_url`, `entered_by`, `checked_by`
+  - the `tfd` source type, with a TFD-URL check
+  - spoken descriptions over 300 characters, or with a dose or schedule,
+    are rejected
+  - a described ingredient needs all four fields and two different people
+  - `--kb-dir` validates a draft folder
+  - the "targets 10 products" warning is gone
+  - the CSV header rows in `kb/` are updated (still no data rows)
+- `scripts/kb_draft_descriptions.py`: an LLM drafts plain spoken
+  descriptions from the indications text into
+  `kb/staging/descriptions_review.csv`. It drafts ingredients from
+  single-ingredient products only, and flags `dose`, `too long`,
+  `new words`, `no source` and `failed`. It refuses to write into `kb/`.
+- `scripts/eval_kb.py`: runs `kb/eval/scans.jsonl` (`expected`: a product_id,
+  `not_listed`, `multiple` or `rescan`) through the real pipeline with a
+  temporary cache. It reports each outcome and exits with code 1 on any
+  wrong reviewed answer. `kb_make_scans.py` now writes `expected`.
+- `kb/README.md` rewritten for the TFD and hand-FDA-lookup workflow.
+
+**Changed:** `speech.PRESCRIPTION_LINE` is now `RX_LINE`, and the
+`prescription=` parameter is now `rx=`. CodeQL had flagged the old name as
+sensitive data on PR #23, a false positive that DevOps dismissed. The API
+field `product.prescription` is unchanged.
+
+**Verified**
+- `pytest`: 239 backend tests pass, plus the scraper's own 6. `ruff` is
+  clean (the scraper is excluded). The real empty `kb/` passes
+  `kb_build --check --allow-empty`.
+- Tests cover the risky pairs on a fake dataset:
+  - NEOZEP read with Bioflu's exact formula → ingredient tier, never
+    Bioflu's answer
+  - generic paracetamol 500 mg → ingredient tier, never Biogesic
+  - Alaxan FR read as paracetamol only → `ingredients_incomplete`
+  - "Biogesik" with ibuprofen → never named Biogesic
+  - Tempra forms by strength
+- End to end on `/v2/identify` with a fake built dataset and local
+  `qwen3.5:4b`:
+  - Biogesic, Alaxan FR and Dolfenal → `reviewed`, with the prescription
+    line for Dolfenal
+  - brand-only foil → `strength_unread`, then `gave_up` at attempt 3
+  - NEOZEP → `ingredient`
+  - an unknown product → `general`
+- `kb_draft_descriptions` on the team's real staging data (23 products, 15
+  ingredients) with `qwen3.5:4b`: 38 drafts in 73 s.
+  - Most drafts are faithful plain-language rewrites.
+  - Flags point at substitutions to confirm ("vaccination", "heartburn",
+    "heavy periods").
+  - Some drafts keep jargon ("mucoviscidosis", "ileostomies") for the
+    reviewer to simplify.
+  - 8 ingredients only appear in combinations and need another source.
+
+**Open items**
+1. **The dataset is empty.** 15 of the 29 brands aren't on TFD under their
+   guessed URL, and Solmux only has "Solmux for Kids". All FDA columns,
+   synonyms, PNF columns and both checker names need doing by hand. M2 is
+   done only after 100+ labeled scans give 0 wrong reviewed answers.
+2. The staged TFD "warnings" are long contraindication lists, not spoken
+   warnings. They aren't spoken; the team can write short ones later.
+3. 8 combination-only ingredients (phenylephrine, chlorphenamine,
+   phenylpropanolamine, dextromethorphan, aluminum hydroxide, magnesium
+   hydroxide, simethicone, …) have no single-ingredient source. Until
+   they're described, unlisted products with them get the general tier,
+   not the ingredient tier.
+4. Still open from M1: the general tier on Groq for unknown medicines
+   (`qwen3.5:4b` again described the made-up ZORBAXIL confidently), and
+   the mobile team's review of contract v2.
+5. `docs/` (outside `backend/`) still says MIMS and "verified".
+
+---
+
 ## 2026-10-20 — M1: parse v2, scan rules, contract v2
 
 **Branch:** `backend/m1-parse-scan-rules` (on top of M0).

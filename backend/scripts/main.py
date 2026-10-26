@@ -27,6 +27,7 @@ import cv2
 from app import config
 from app.cache_store import CacheStore
 from app.pipeline import identify
+from app.retrieval import KnowledgeBase
 from scripts.ocr_engines import run_ocr
 from scripts.tts_output import speak
 
@@ -38,19 +39,19 @@ def load_ocr_engine_choice() -> str:
     print("⚠️  No benchmark result found (run benchmark_ocr.py first). Defaulting to paddleocr.")
     return "paddleocr"
 
-def process_frame(image_path: str, engine_name: str, cache: CacheStore) -> None:
+def process_frame(image_path: str, engine_name: str, cache: CacheStore, kb: KnowledgeBase) -> None:
     print("Running OCR...")
     raw_text, ocr_confidence = run_ocr(engine_name, image_path)
 
     print("Identifying...")
     result = identify(raw_text, ocr_confidence, cache,
-                      meta={"image_path": image_path, "ocr_engine": engine_name, "client": "webcam"})
+                      meta={"image_path": image_path, "ocr_engine": engine_name, "client": "webcam"}, kb=kb)
 
     if result["status"] != "rescan":
         print(f"\n--- Result ({result['status']}, cache {result['cache']}) ---")
         print(f"Brand: {result['brand_name']}\nGeneric: {result['generic_name']}\nDosage: {result['dosage']}")
         print(f"Description: {result['description']}")
-        print(f"Grounded in PH FDA source: {result['grounded']}")
+        print(f"Reviewed by the team: {result['grounded']}")
 
     speak(result["spoken_text"])
 
@@ -76,6 +77,8 @@ def main():
     engine_name = load_ocr_engine_choice()
     print(f"Using OCR engine: {engine_name}")
     cache = CacheStore()
+    kb = KnowledgeBase.load(config.KB_DB_PATH)
+    print(f"Reviewed dataset: {len(kb.products)} products (run scripts.kb_build to refresh)")
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -101,7 +104,7 @@ def main():
                 cv2.imwrite(image_path, frame)
                 print(f"\nCaptured {image_path}")
                 try:
-                    process_frame(image_path, engine_name, cache)
+                    process_frame(image_path, engine_name, cache, kb)
                 except Exception as e:
                     print(f"Pipeline error: {e}")
                 finally:

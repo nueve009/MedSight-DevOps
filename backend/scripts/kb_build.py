@@ -2,18 +2,24 @@
 Validate the hand-curated medicine dataset in kb/ and build it into
 data/kb.sqlite for retrieval.
 
-The CSVs are the source of truth; every row is entered from a photographed
-box or insert and an FDA portal lookup, then checked by a second teammate
-(see kb/README.md). This script refuses to build if any row breaks the rules,
-because a wrong row here would be spoken to a user as verified fact.
+The CSVs are the source of truth. Every product is entered from its
+TheFilipinoDoctor page (or the box or insert) plus a hand lookup on the FDA
+portal, then checked by a second teammate (see kb/README.md). The spoken
+descriptions are drafted by an LLM (scripts/kb_draft_descriptions.py) and
+checked by a person against the source text. This script refuses to build if
+any row breaks the rules, because a wrong row here would be spoken to a user
+as "reviewed".
 
 Usage:
-    python -m scripts.kb_build           validate, then build data/kb.sqlite
-    python -m scripts.kb_build --check   validate only (run after editing the CSVs)
+    python -m scripts.kb_build                    validate, then build data/kb.sqlite
+    python -m scripts.kb_build --check            validate only (run after editing the CSVs)
     python -m scripts.kb_build --check --allow-empty
-                                         CI only, until the team's first rows are merged:
-                                         an empty dataset is a warning, not an error
+                                                  CI only, until the team's first rows are merged:
+                                                  an empty dataset is a warning, not an error
+    python -m scripts.kb_build --check --kb-dir kb/staging/converted
+                                                  validate a draft folder with the same rules
 """
+import argparse
 import csv
 import hashlib
 import re
@@ -23,24 +29,33 @@ from datetime import date
 from pathlib import Path
 
 from app import config
+from app.utils import contains_dosing
 
 KB_FILES = ("products.csv", "ingredients.csv", "passages.csv")
 
 PRODUCT_FIELDS = ["product_id", "brand_name", "aliases", "generic_names", "strengths", "dosage_form",
                   "classification", "fda_reg_no", "reg_expiry", "manufacturer", "portal_checked_on",
-                  "entered_by", "checked_by"]
-INGREDIENT_FIELDS = ["generic_name", "synonyms", "pnf_listed", "pnf_forms", "pnf_page"]
+                  "entered_by", "checked_by", "spoken_description", "description_checked_by"]
+INGREDIENT_FIELDS = ["generic_name", "synonyms", "pnf_listed", "pnf_forms", "pnf_page",
+                     "spoken_description", "source_url", "entered_by", "checked_by"]
 PASSAGE_FIELDS = ["passage_id", "product_id", "section", "text", "source_type", "source_ref",
                   "entered_by", "checked_by"]
 
 OPTIONAL_PRODUCT_FIELDS = {"aliases", "manufacturer"}
-OPTIONAL_INGREDIENT_FIELDS = {"synonyms", "pnf_forms", "pnf_page"}
+# An ingredient may be listed only for its names (to match synonyms). Its
+# description fields are then all empty; once spoken_description is filled,
+# the other three are required too (see validate()).
+INGREDIENT_DESCRIPTION_FIELDS = {"spoken_description", "source_url", "entered_by", "checked_by"}
+OPTIONAL_INGREDIENT_FIELDS = {"synonyms", "pnf_forms", "pnf_page"} | INGREDIENT_DESCRIPTION_FIELDS
 
 CLASSIFICATIONS = {"OTC", "Rx", "HR"}  # over-the-counter, prescription, household remedy
 SECTIONS = {"indications", "warnings"}
-SOURCE_TYPES = {"box", "insert", "pnf"}
+# tfd = a TheFilipinoDoctor drug page (team decision 2026-10-26); source_ref is its URL.
+SOURCE_TYPES = {"box", "insert", "pnf", "tfd"}
+TFD_URL_RE = re.compile(r"^https://(www\.)?thefilipinodoctor\.com/\S+$")
 ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 REG_NO_RE = re.compile(r"^[A-Z]{2,6}-[A-Z0-9-]+$")  # e.g. DR-XY12345; warning only
+MAX_SPOKEN_CHARS = 300
 
 
 def split_list(value: str) -> list[str]:
@@ -103,6 +118,14 @@ class Validator:
         if row["entered_by"] and row["entered_by"].lower() == row["checked_by"].lower():
             self.error(where, "checked_by must be a different person from entered_by")
 
+    def check_spoken(self, where: str, text: str) -> None:
+        """What a user will hear as reviewed: short, and never a dose or schedule."""
+        if len(text) > MAX_SPOKEN_CHARS:
+            self.error(where, f"'spoken_description' is {len(text)} characters; keep it under {MAX_SPOKEN_CHARS}")
+        if contains_dosing(text):
+            self.error(where, "'spoken_description' looks like it gives a dose or schedule; "
+                              "descriptions say what a medicine is for, never how much to take")
+
 
 def validate(kb_dir: Path = config.KB_DIR, allow_empty: bool = False) -> tuple[Validator, dict]:
     v = Validator()
@@ -123,6 +146,16 @@ def validate(kb_dir: Path = config.KB_DIR, allow_empty: bool = False) -> tuple[V
             if key in known_generics:
                 v.error(where, f"'{name}' already appears in ingredients.csv")
             known_generics[key] = row["generic_name"]
+
+        if any(row[f] for f in INGREDIENT_DESCRIPTION_FIELDS):
+            for field in sorted(INGREDIENT_DESCRIPTION_FIELDS):
+                if not row[field]:
+                    v.error(where, f"'{field}' is empty; a described ingredient needs "
+                                   "spoken_description, source_url, entered_by and checked_by")
+            v.check_two_people(where, row)
+            if row["source_url"] and not row["source_url"].startswith("https://"):
+                v.error(where, "'source_url' must be an https:// link to the page the description came from")
+            v.check_spoken(where, row["spoken_description"])
 
     # --- products ---
     product_ids: set[str] = set()
@@ -159,6 +192,7 @@ def validate(kb_dir: Path = config.KB_DIR, allow_empty: bool = False) -> tuple[V
             v.error(where, f"FDA registration expired on {expiry}; re-check the portal")
         v.check_date(where, "portal_checked_on", row["portal_checked_on"])
         v.check_two_people(where, row)
+        v.check_spoken(where, row["spoken_description"])
 
     # --- passages ---
     passage_ids: set[str] = set()
@@ -174,6 +208,8 @@ def validate(kb_dir: Path = config.KB_DIR, allow_empty: bool = False) -> tuple[V
             v.error(where, f"'section' must be one of {sorted(SECTIONS)}")
         if row["source_type"] and row["source_type"] not in SOURCE_TYPES:
             v.error(where, f"'source_type' must be one of {sorted(SOURCE_TYPES)}")
+        if row["source_type"] == "tfd" and row["source_ref"] and not TFD_URL_RE.match(row["source_ref"]):
+            v.error(where, "a 'tfd' passage needs the TheFilipinoDoctor page URL in 'source_ref'")
         if row["section"] == "indications":
             products_with_indications.add(row["product_id"])
         v.check_two_people(where, row)
@@ -184,8 +220,6 @@ def validate(kb_dir: Path = config.KB_DIR, allow_empty: bool = False) -> tuple[V
 
     if not products:
         (v.warn if allow_empty else v.error)("products.csv", "no products yet")
-    elif len(products) != 10:
-        v.warn("products.csv", f"{len(products)} products (the prototype targets 10)")
 
     data = {
         "products": [row for _, row in products],
@@ -195,8 +229,9 @@ def validate(kb_dir: Path = config.KB_DIR, allow_empty: bool = False) -> tuple[V
     return v, data
 
 
-def build(data: dict, version: str, db_path: Path = config.KB_DB_PATH) -> None:
+def build(data: dict, version: str, db_path: Path | None = None) -> None:
     """Write a fresh kb.sqlite, then swap it in so readers never see a half-built file."""
+    db_path = db_path or config.KB_DB_PATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = db_path.with_suffix(".tmp")
     tmp_path.unlink(missing_ok=True)
@@ -211,7 +246,7 @@ def build(data: dict, version: str, db_path: Path = config.KB_DB_PATH) -> None:
             CREATE TABLE passages ({", ".join(f"{f} TEXT NOT NULL" for f in PASSAGE_FIELDS)},
                                    PRIMARY KEY (passage_id));
             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            -- Lexical search fallback over names, aliases and passage text.
+            -- Lexical search over names, aliases and passage text (for people and tools, not matching).
             CREATE VIRTUAL TABLE search USING fts5(product_id UNINDEXED, passage_id UNINDEXED, content);
         """)
         for table, fields in (("products", PRODUCT_FIELDS), ("ingredients", INGREDIENT_FIELDS),
@@ -239,25 +274,33 @@ def build(data: dict, version: str, db_path: Path = config.KB_DB_PATH) -> None:
 
 
 def main() -> None:
-    check_only = "--check" in sys.argv[1:]
-    allow_empty = "--allow-empty" in sys.argv[1:]
-    if allow_empty and not check_only:
+    parser = argparse.ArgumentParser(description="Validate kb/ and build data/kb.sqlite.")
+    parser.add_argument("--check", action="store_true", help="validate only; don't build")
+    parser.add_argument("--allow-empty", action="store_true",
+                        help="with --check: an empty dataset is a warning (CI until the first rows land)")
+    parser.add_argument("--kb-dir", type=Path, default=None,
+                        help="folder with the three CSVs (default: kb/)")
+    args = parser.parse_args()
+    if args.allow_empty and not args.check:
         sys.exit("--allow-empty only works with --check; an empty kb.sqlite is never built.")
-    v, data = validate(allow_empty=allow_empty)
+    kb_dir = args.kb_dir or config.KB_DIR
 
+    v, data = validate(kb_dir, allow_empty=args.allow_empty)
     for w in v.warnings:
         print(f"warning  {w}")
     for e in v.errors:
         print(f"ERROR    {e}")
 
     counts = ", ".join(f"{len(rows)} {name}" for name, rows in data.items())
+    brands = len({p["brand_name"].lower() for p in data["products"]})
     if v.errors:
-        print(f"\n{len(v.errors)} error(s) in kb/ ({counts}). Fix them and run again.")
+        print(f"\n{len(v.errors)} error(s) in {kb_dir} ({counts}). Fix them and run again.")
         sys.exit(1)
 
-    print(f"kb/ is valid: {counts}.")
-    if not check_only:
-        version = kb_version()
+    print(f"{kb_dir} is valid: {counts} ({brands} brands).")
+    if not args.check:
+        config.ensure_dirs()
+        version = kb_version(kb_dir)
         build(data, version)
         print(f"Built {config.KB_DB_PATH} (kb_version {version}).")
 
