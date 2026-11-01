@@ -237,6 +237,8 @@ Done when: all 29 validate; the evaluation on at least 100 labeled scans (includ
 
 ### M3. Supabase (M)
 
+M3 and M4 ship together on one branch and one PR, `backend/m3-m4-supabase-ratelimit` (decided 2026-11-01).
+
 Goal: durable cache and logs that survive redeploys, without making scans depend on the database.
 
 - [x] A `Store` interface (get, set, delete, list) with a SQLite version for tests and a Postgres version for Railway, chosen by `CACHE_BACKEND` (`app/store/`).
@@ -247,7 +249,7 @@ Goal: durable cache and logs that survive redeploys, without making scans depend
 
 Done when: the same test suite passes on SQLite and on a throwaway Postgres in CI, and killing the database mid-test still returns answers.
 
-### M4. Rate limiting and abuse protection (M)
+### M4. Rate limiting and abuse protection (M; ships with M3)
 
 Goal: one device or script can't run up costs or crowd out other users.
 
