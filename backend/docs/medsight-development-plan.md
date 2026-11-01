@@ -239,11 +239,11 @@ Done when: all 29 validate; the evaluation on at least 100 labeled scans (includ
 
 Goal: durable cache and logs that survive redeploys, without making scans depend on the database.
 
-- [ ] A `Store` interface (get, set, delete, list) with a SQLite version for tests and a Postgres version for Railway, chosen by `CACHE_BACKEND`.
-- [ ] Numbered SQL migrations for the tables in section 4; RLS on, no policies; a dedicated backend role.
-- [ ] Fail open: connect timeout 2 s, query timeout 1 s; after a failure, skip the database for 60 s (circuit breaker) and log it.
-- [ ] Web answers expire after 30 days. (Reviewed and ingredient answers aren't cached: since M2 they're served from `kb/` in memory.)
-- [ ] Nightly export job and a written restore procedure.
+- [x] A `Store` interface (get, set, delete, list) with a SQLite version for tests and a Postgres version for Railway, chosen by `CACHE_BACKEND` (`app/store/`).
+- [x] Numbered SQL migrations for the tables in section 4; RLS on; a dedicated backend role. M3 adds `parses`, `answers` and `scan_log`; `rate_limits` comes with M4 and `audit_log` with M7. RLS policies exist only for the backend role, so the public keys still open nothing (no BYPASSRLS needed).
+- [x] Fail open: connect timeout 2 s, query timeout 1 s; after a failure, skip the database for 60 s (circuit breaker) and log it.
+- [x] Web answers expire after 30 days. (Reviewed and ingredient answers aren't cached: since M2 they're served from `kb/` in memory.)
+- [x] Nightly export job and a written restore procedure (`scripts/store_admin.py`, `migrations/README.md`; scheduling it on Railway is DevOps's).
 
 Done when: the same test suite passes on SQLite and on a throwaway Postgres in CI, and killing the database mid-test still returns answers.
 

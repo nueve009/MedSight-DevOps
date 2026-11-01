@@ -31,6 +31,7 @@ backend/
 ├── app/        the server: what the cloud host runs (uvicorn app.api:app)
 ├── scripts/    laptop-only tools: webcam prototype, OCR benchmark, dataset builders
 ├── kb/         the reviewed medicine dataset (CSV files)
+├── migrations/ numbered SQL files for the Supabase cache (see migrations/README.md)
 ├── tests/      pytest suite; the LLM is always faked
 ├── ops/        CI workflow and other files the DevOps engineer moves into place
 ├── requirements.txt         server packages (pinned)
@@ -56,6 +57,7 @@ cp .env.example .env                   # then fill in GROQ_API_KEY and MEDSIGHT_
 
 ```bash
 pytest           # never calls a real LLM; data and logs go to a temp folder
+                 # set MEDSIGHT_TEST_DATABASE_URL to also run the store tests on a throwaway Postgres
 ruff check .
 pip-audit -r requirements.txt
 ```
@@ -77,6 +79,10 @@ pyttsx3.
 | `MAX_PARSE_CHARS` | `2000` | Longer OCR text is a rescan ("move closer") with no LLM call |
 | `OCR_CAVEAT_THRESHOLD` | `0.55` | Below this OCR confidence an answer gets "I'm not fully sure of this reading". Old name `LOW_CONFIDENCE_THRESHOLD` still works. |
 | `MAX_SCAN_ATTEMPTS` | `3` | From this attempt on, a rescan becomes `gave_up` |
+| `CACHE_BACKEND` | `sqlite` | `postgres` for the shared Supabase cache and scan log (see `migrations/README.md`) |
+| `DATABASE_URL` | — | Postgres connection for the backend's own role; required with `CACHE_BACKEND=postgres` |
+| `DATABASE_SSLMODE` | `require` | TLS to Supabase; `disable` only for a local database |
+| `DB_CONNECT_TIMEOUT_S` / `DB_QUERY_TIMEOUT_MS` / `DB_SKIP_AFTER_FAILURE_S` | `2` / `1000` / `60` | Fail-open limits: past them a scan treats the cache as a miss, then skips the database for a while |
 | `MEDSIGHT_DATA_DIR` / `MEDSIGHT_LOGS_DIR` | `data/` / `logs/` | Point at a persistent disk on the cloud host |
 | `LOG_LEVEL` | `INFO` | Level for the JSON logs on stdout |
 
@@ -275,10 +281,11 @@ reason, hint, tier, both caches, attempt, product count, stage latencies,
 hashed device ID), each with the request ID. These lines never include the
 OCR text, keys or headers.
 
-Every scan, from the app or the webcam, also appends a full record to
-`logs/run_log.jsonl`, including the OCR text and the parse. It's for local
-accuracy checks; M3 replaces it on the server with a `scan_log` table that
-drops OCR text after 30 days.
+Every scan also writes a full record, including the OCR text and the parse,
+to the scan log. With `CACHE_BACKEND=sqlite` (local) that's
+`logs/run_log.jsonl`. With `postgres` it's the `scan_log` table in Supabase:
+the OCR text is in its own column and `python -m scripts.store_admin purge`
+clears it after 30 days. Device IDs are only ever stored hashed.
 
 ## Known limitations
 

@@ -38,6 +38,20 @@ def ensure_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
+# --- Cache and scan log (app/store/) ---
+# "sqlite" (local file, the default) or "postgres" (Supabase on Railway).
+CACHE_BACKEND = os.environ.get("CACHE_BACKEND", "sqlite").lower()
+# Postgres connection string for the backend's own role (never the owner's).
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_SSLMODE = os.environ.get("DATABASE_SSLMODE", "require")   # TLS to Supabase; "disable" only locally
+DB_CONNECT_TIMEOUT_S = float(os.environ.get("DB_CONNECT_TIMEOUT_S", "2"))
+DB_QUERY_TIMEOUT_MS = int(os.environ.get("DB_QUERY_TIMEOUT_MS", "1000"))
+# After a database failure, scans skip it for this long instead of waiting on it each time.
+DB_SKIP_AFTER_FAILURE_S = float(os.environ.get("DB_SKIP_AFTER_FAILURE_S", "60"))
+DB_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "5"))
+WEB_ANSWER_TTL_DAYS = 30            # web answers stop being served after this (decided 2026-10-19)
+SCAN_LOG_OCR_RETENTION_DAYS = 30    # OCR text is cleared from scan_log after this (privacy, plan section 7 #9)
+
 # --- Logging ---
 # One JSON object per line on stdout (see logging_setup.py).
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()

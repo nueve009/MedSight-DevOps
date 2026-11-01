@@ -30,6 +30,8 @@ python -m scripts.kb_build                                # validate + build dat
 python -m scripts.kb_draft_descriptions                   # LLM drafts of spoken descriptions -> kb/staging/
 python -m scripts.eval_kb [--out report.json]             # labeled scans; exit 1 on any wrong reviewed answer
 python -m scripts.kb_make_scans sorted_output/packaging   # draft eval scans from images
+python -m scripts.migrate [--check]                       # apply migrations/ to Supabase (MIGRATION_DATABASE_URL)
+python -m scripts.store_admin export --out <dir> | restore <file> | purge   # nightly backup and cleanup
 ```
 
 `kb/staging/` (git-ignored) holds the team's raw scraper output and the
@@ -65,7 +67,7 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
 
 1. **Input checks** (`scan_rules.input_reason`). No letters → `no_text`; more
    than `MAX_PARSE_CHARS` → `too_much_text`. Both are rescans with no LLM call.
-2. **Raw-text parse cache** (`CacheStore.get_parse`), keyed by
+2. **Raw-text parse cache** (`Store.get_parse`), keyed by
    `utils.raw_text_key` (normalized OCR text + model + `PARSE_PROMPT_VERSION`).
    Bump `PARSE_PROMPT_VERSION` whenever the parse prompt or schema changes.
    Only valid, non-empty parses are cached.
@@ -96,7 +98,7 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    reviewed `spoken_description`. Several full matches with different
    descriptions or Rx status are not answered as reviewed. Reviewed and
    ingredient answers never use the answer cache or an LLM.
-5. **Answer cache** (`CacheStore.get_answer`, general tier only), keyed by `utils.answer_key`:
+5. **Answer cache** (`Store.get_answer`, general tier only), keyed by `utils.answer_key`:
    brand + every (ingredient, strength) pair, sorted, with strengths
    normalized (`utils.normalize_strength`: "500 mg" = "500mg" = "500 MG").
    A combination never shares a key with one of its ingredients.
@@ -116,6 +118,19 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    old constant name as sensitive data (false positive, PR #23).
 
 Cache errors never fail a scan (`pipeline._cache_call` logs and carries on).
+
+**Store** (`app/store/`): one interface, two versions, picked by
+`CACHE_BACKEND`. `SQLiteStore` (default; tests, laptops, `eval_kb.py`; scan
+log = `logs/run_log.jsonl`) and `PostgresStore` (Supabase on Railway; scan
+log = the `scan_log` table, OCR text in its own column, cleared after 30 days
+by `scripts/store_admin.py purge`). Postgres fails open fast: 2 s connect,
+1 s per query, then the database is skipped for 60 s (`CircuitBreaker`,
+`StoreSkipped`, logged once). Only `general` and `web` answers are stored;
+`rejected` and expired ones are a miss; web answers expire after 30 days.
+Tables come only from `migrations/` (`python -m scripts.migrate`, owner
+connection in `MIGRATION_DATABASE_URL`); see `migrations/README.md` for the
+backend role and the restore steps. `tests/test_store.py` runs the same
+suite on SQLite and, when `MEDSIGHT_TEST_DATABASE_URL` is set, on Postgres.
 
 **LLM provider** (`app/llm_client.py`):
 - **Groq:** calls the OpenAI-compatible `/chat/completions` endpoint with

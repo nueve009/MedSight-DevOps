@@ -25,9 +25,9 @@ from pathlib import Path
 import cv2
 
 from app import config
-from app.cache_store import CacheStore
 from app.pipeline import identify
 from app.retrieval import KnowledgeBase
+from app.store.sqlite import SQLiteStore
 from scripts.ocr_engines import run_ocr
 from scripts.tts_output import speak
 
@@ -39,7 +39,7 @@ def load_ocr_engine_choice() -> str:
     print("⚠️  No benchmark result found (run benchmark_ocr.py first). Defaulting to paddleocr.")
     return "paddleocr"
 
-def process_frame(image_path: str, engine_name: str, cache: CacheStore, kb: KnowledgeBase) -> None:
+def process_frame(image_path: str, engine_name: str, cache: SQLiteStore, kb: KnowledgeBase) -> None:
     print("Running OCR...")
     raw_text, ocr_confidence = run_ocr(engine_name, image_path)
 
@@ -76,7 +76,7 @@ def main():
     config.ensure_dirs()
     engine_name = load_ocr_engine_choice()
     print(f"Using OCR engine: {engine_name}")
-    cache = CacheStore()
+    cache = SQLiteStore()
     kb = KnowledgeBase.load(config.KB_DB_PATH)
     print(f"Reviewed dataset: {len(kb.products)} products (run scripts.kb_build to refresh)")
 

@@ -24,12 +24,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app import config, speech
-from app.cache_store import CacheStore
 from app.llm_client import LLMUnavailableError
 from app.logging_setup import RequestIdMiddleware, configure_logging, request_id_var
 from app.pipeline import ScanRequest, identify, identify_scan
 from app.retrieval import KnowledgeBase
 from app.scan_rules import Block, CaptureHints
+from app.store import make_store
 from app.utils import hash_device_id
 
 log = logging.getLogger(__name__)
@@ -39,12 +39,15 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     configure_logging(config.LOG_LEVEL)
     config.ensure_dirs()
-    app.state.cache = CacheStore()
+    # The cache and scan log: SQLite locally, Supabase on Railway (CACHE_BACKEND).
+    app.state.cache = make_store()
     # The reviewed dataset, built into data/kb.sqlite by scripts/kb_build.py at deploy time.
     app.state.kb = KnowledgeBase.load(config.KB_DB_PATH)
     log.info("startup", extra={"fields": {"llm_provider": config.LLM_PROVIDER, "kb_version": app.state.kb.version,
-                                          "kb_products": len(app.state.kb.products)}})
+                                          "kb_products": len(app.state.kb.products),
+                                          "cache_backend": config.CACHE_BACKEND}})
     yield
+    app.state.cache.close()
 
 
 class BodySizeLimitMiddleware:

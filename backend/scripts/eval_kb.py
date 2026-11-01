@@ -27,10 +27,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app import config, llm_client
-from app.cache_store import CacheStore
 from app.pipeline import ScanRequest, identify_scan
 from app.retrieval import KnowledgeBase
 from app.scan_rules import Block
+from app.store import Store
+from app.store.sqlite import SQLiteStore
 
 NOT_LISTED, MULTIPLE, RESCAN = "not_listed", "multiple", "rescan"
 NO_ANSWER = ("rescan", "gave_up")
@@ -88,7 +89,7 @@ def load_scans(path: Path, kb: KnowledgeBase) -> list[dict]:
     return scans
 
 
-def evaluate(scans: list[dict], kb: KnowledgeBase, cache: CacheStore) -> dict:
+def evaluate(scans: list[dict], kb: KnowledgeBase, cache: Store) -> dict:
     results = []
     for scan in scans:
         r = identify_scan(ScanRequest(scan["ocr_text"], blocks=_blocks(scan.get("blocks")),
@@ -132,7 +133,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="medsight_eval_") as tmp:
         config.RUN_LOG_PATH = Path(tmp) / "run_log.jsonl"   # keep eval scans out of the real run log
         try:
-            report = evaluate(scans, kb, CacheStore(Path(tmp) / "cache.sqlite"))
+            report = evaluate(scans, kb, SQLiteStore(Path(tmp) / "cache.sqlite"))
         except llm_client.LLMUnavailableError as e:
             sys.exit(f"The LLM is unavailable: {e}")
 

@@ -42,7 +42,8 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `app/speech.py` - Every spoken sentence, in a fixed order
 - `app/llm_client.py` - LLM client: Groq (default) or local Ollama
 - `app/description_agent.py` - Medicine description generation
-- `app/cache_store.py` - SQLite cache used by the pipeline
+- `app/store/` - cache and scan log: SQLite locally, Supabase Postgres on Railway (`CACHE_BACKEND`)
+- `migrations/` - numbered SQL files for Supabase, applied by `scripts/migrate.py`
 - `app/logging_setup.py` - JSON logs on stdout, request IDs
 - `tests/` - pytest suite (LLM always faked); `tests/fixtures/` holds fake data
 - `ops/` - files the DevOps engineer moves outside `backend/` (CI workflow)
