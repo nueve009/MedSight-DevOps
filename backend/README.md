@@ -75,7 +75,14 @@ pyttsx3.
 | `GROQ_MODEL` | `qwen/qwen3.8-27b` | Any Groq chat model that supports JSON mode |
 | `OLLAMA_HOST` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.2:3b` | Used when `LLM_PROVIDER=ollama` |
 | `LLM_TIMEOUT_S` | `15` | Groq request timeout; past it the user hears "try again" |
-| `MEDSIGHT_API_KEY` | — | Shared secret the app sends as `X-API-Key`. If unset, both identify routes refuse every request. |
+| `MEDSIGHT_API_KEY` | — | Shared secret the app sends as `X-API-Key`. If no key is set at all, both identify routes refuse every request. |
+| `MEDSIGHT_API_KEYS` | — | More keys as `name=key,name=key` (one per app release or tester group); remove one to cut it off. `MEDSIGHT_API_KEY` counts as `default`. |
+| `RATE_DEVICE_PER_MINUTE` / `RATE_DEVICE_PER_DAY` | `15` / `150` | Scans per phone (`X-Device-Id`); a request without one counts per address |
+| `RATE_ADDRESS_PER_MINUTE` | `30` | Scans per client address |
+| `LLM_DAILY_BUDGET` | `180` | Model calls (parse + describe) per UTC day for the whole service; a warning is logged at 80% |
+| `KEY_DAILY_LLM_CAPS` | — | Optional model-call caps per key name, e.g. `testers-a=60` |
+| `CLIENT_IP_HEADER` | — | Header with the real client address. On Railway: `x-real-ip`. Empty = the TCP peer. |
+| `MAX_CONCURRENT_SCANS` | `8` | Scans running at once; past it, a quick 503 |
 | `MAX_PARSE_CHARS` | `2000` | Longer OCR text is a rescan ("move closer") with no LLM call |
 | `OCR_CAVEAT_THRESHOLD` | `0.55` | Below this OCR confidence an answer gets "I'm not fully sure of this reading". Old name `LOW_CONFIDENCE_THRESHOLD` still works. |
 | `MAX_SCAN_ATTEMPTS` | `3` | From this attempt on, a rescan becomes `gave_up` |
@@ -186,10 +193,18 @@ Response (200):
 
 Other responses (both versions):
 - **401:** missing or wrong API key.
+- **429:** too many requests. The body is `{"status": "rate_limited",
+  "reason": ..., "retry_after_s": ..., "spoken_text": ..., "request_id": ...}`,
+  with a `Retry-After` header (seconds). Speak `spoken_text`, and don't
+  retry before `retry_after_s`. `reason`:
+  - `too_fast`: this phone (`X-Device-Id`) or network sent too many scans this minute
+  - `daily_limit`: this phone's daily scan limit
+  - `service_limit`: the service's model budget for the day (UTC) is used up.
+    Scans that need no model call (cached labels) still work.
 - **413:** request body over 64 KB.
 - **422:** invalid body: text over 5000 characters, more than 500 blocks, a
   `box` without 4 numbers, `attempt` below 1, a confidence outside 0–1.
-- **503:** the LLM is busy or down (for example, the Groq rate limit or a
+- **503:** too many scans running at once (with `Retry-After: 2`), or the LLM is busy or down (for example, the Groq rate limit or a
   15-second timeout), or the server's API key isn't configured. When the LLM
   is the cause, the body is `{"status": "service_unavailable", "spoken_text":
   ..., "request_id": ...}`.

@@ -111,3 +111,7 @@ def test_fixed_messages():
     assert speech.MULTIPLE == "I can see more than one medicine. Please set the others aside and scan one at a time."
     assert speech.SERVICE_BUSY == ("The identification service is busy or unavailable right now. "
                                    "Please try again in a moment.")
+    assert speech.TOO_FAST == "You're scanning very quickly. Please wait a few seconds and try again."
+    assert speech.DAILY_LIMIT == "This phone has reached today's scan limit. Please try again tomorrow."
+    assert speech.SERVICE_LIMIT == ("The identification service has reached its limit for today. "
+                                    "Please try again later.")

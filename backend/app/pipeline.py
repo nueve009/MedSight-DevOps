@@ -64,7 +64,7 @@ def _cache_call(action: str, fn: Callable, *args):
         return None
 
 
-def _parse(text: str, cache: Store, record: dict) -> ParseResult:
+def _parse(text: str, cache: Store, record: dict, budget: Callable[[], None]) -> ParseResult:
     key = raw_text_key(text, _model_name(), PARSE_PROMPT_VERSION)
     cached = _cache_call("get_parse", cache.get_parse, key)
     if cached is not None:
@@ -72,6 +72,7 @@ def _parse(text: str, cache: Store, record: dict) -> ParseResult:
         return ParseResult.from_dict(cached)
 
     record["parse_cache"] = "miss"
+    budget()   # raises LLMBudgetExceeded when the day's model calls are used up
     started = time.perf_counter()
     result = parse_label(text)
     record["parse_ms"] = round((time.perf_counter() - started) * 1000)
@@ -112,7 +113,7 @@ def _no_answer(decision: Decision) -> dict:
     return _response(decision, spoken)
 
 
-def _answer(decision: Decision, match: Match, cache: Store, record: dict) -> dict:
+def _answer(decision: Decision, match: Match, cache: Store, record: dict, budget: Callable[[], None]) -> dict:
     caveat = decision.status == "ok_caveat"
     if match.kind == retrieval.REVIEWED:
         # Speak the dataset's own spelling, not the OCR's ("Bi0gesic" -> "Biogesic").
@@ -133,6 +134,7 @@ def _answer(decision: Decision, match: Match, cache: Store, record: dict) -> dic
     if cached:
         tier, description, sources, cache_status = cached["tier"], cached["description"], cached["sources"], "hit"
     else:
+        budget()
         started = time.perf_counter()
         result = get_description(product)
         record["describe_ms"] = round((time.perf_counter() - started) * 1000)
@@ -157,15 +159,20 @@ def _finish(record: dict, response: dict, started: float, cache: Store) -> dict:
         **{k: record.get(k) for k in ("status", "rescan_reason", "hint", "tier", "cache", "parse_cache",
                                        "match", "matched_product_id", "kb_version", "attempt",
                                        "product_count", "parse_confidence", "description_status",
-                                       "parse_ms", "describe_ms", "client", "platform", "app_version", "device")},
+                                       "parse_ms", "describe_ms", "client", "platform", "app_version", "device",
+                                       "key")},
         "latency_ms": round((time.perf_counter() - started) * 1000),
     }})
     return response
 
 
-def identify_scan(req: ScanRequest, cache: Store, kb: Optional[KnowledgeBase] = None) -> dict:
+def identify_scan(req: ScanRequest, cache: Store, kb: Optional[KnowledgeBase] = None,
+                  budget: Optional[Callable[[], None]] = None) -> dict:
     """Run the post-OCR pipeline against the reviewed dataset kb (None = empty dataset).
-    Raises llm_client.LLMUnavailableError if the LLM can't be reached."""
+    budget runs before each model call (ratelimit.Limiter.budget_for); None = no budget.
+    Raises llm_client.LLMUnavailableError if the LLM can't be reached, or its
+    subclass ratelimit.LLMBudgetExceeded when the budget is used up."""
+    budget = budget or (lambda: None)
     kb = KnowledgeBase() if kb is None else kb
     started = time.perf_counter()
     record = {**req.meta, "raw_ocr_text": req.text, "ocr_confidence": req.ocr_confidence, "attempt": req.attempt}
@@ -176,7 +183,7 @@ def identify_scan(req: ScanRequest, cache: Store, kb: Optional[KnowledgeBase] = 
     if reason:
         return _finish(record, _no_answer(scan_rules.rescan(reason, req.hints, req.attempt)), started, cache)
 
-    parse = _parse(req.text, cache, record)
+    parse = _parse(req.text, cache, record, budget)
     record["parsed"] = parse.to_dict()
     record["parse_confidence"] = parse.confidence
     record["product_count"] = len(parse.products)
@@ -196,7 +203,7 @@ def identify_scan(req: ScanRequest, cache: Store, kb: Optional[KnowledgeBase] = 
         # never answered, and named with the dataset's spelling.
         decision = scan_rules.rescan(match.reason, req.hints, req.attempt, match.product.as_parsed())
         return _finish(record, _no_answer(decision), started, cache)
-    return _finish(record, _answer(decision, match, cache, record), started, cache)
+    return _finish(record, _answer(decision, match, cache, record, budget), started, cache)
 
 
 # --- v1 adapter ---
@@ -205,10 +212,11 @@ V1_NOT_VERIFIED = "not verified"   # v1 warning value; kept as is for older app 
 
 
 def identify(raw_text: str, ocr_confidence: Optional[float], cache: Store,
-             meta: Optional[dict] = None, kb: Optional[KnowledgeBase] = None) -> dict:
+             meta: Optional[dict] = None, kb: Optional[KnowledgeBase] = None,
+             budget: Optional[Callable[[], None]] = None) -> dict:
     """POST /identify (v1). Same pipeline as v2, mapped to the v1 response shape:
     ok -> ok, ok_caveat -> low_confidence, everything else -> rescan."""
-    r = identify_scan(ScanRequest(text=raw_text, ocr_confidence=ocr_confidence, meta=meta or {}), cache, kb)
+    r = identify_scan(ScanRequest(text=raw_text, ocr_confidence=ocr_confidence, meta=meta or {}), cache, kb, budget)
     if r["status"] not in ANSWER_STATUSES:
         return {"status": "rescan", "brand_name": None, "generic_name": None, "dosage": None,
                 "description": None, "grounded": False, "source_url": None, "warnings": [],

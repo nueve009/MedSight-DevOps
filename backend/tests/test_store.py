@@ -25,7 +25,7 @@ DEAD_URL = "postgresql://nobody:nothing@127.0.0.1:1/none"
 def _reset_postgres() -> None:
     import psycopg
     with psycopg.connect(PG_URL, sslmode=PG_SSLMODE, autocommit=True) as conn:
-        conn.execute("DROP TABLE IF EXISTS parses, answers, scan_log, schema_version CASCADE")
+        conn.execute("DROP TABLE IF EXISTS parses, answers, scan_log, rate_limits, schema_version CASCADE")
         conn.execute(migrate._BOOTSTRAP)
         for version, path in migrate.migration_files():
             conn.execute(path.read_text(encoding="utf-8"))
@@ -120,6 +120,14 @@ def test_export_and_restore(store, tmp_path):
     assert (b["tier"], b["status"], b["description"]) == ("web", "pending_review", "From the web.")
 
 
+def test_rate_counters(store):
+    assert store.incr_counters([("device:a/60", 0, 60), ("device:a/86400", 0, 86400)]) == [1, 1]
+    assert store.incr_counters([("device:a/60", 0, 60), ("device:a/86400", 0, 86400)]) == [2, 2]
+    assert store.incr_counters([("device:a/60", 60, 60)]) == [1]          # the next window starts at 1
+    assert store.purge()["rate_windows_deleted"] == 3                      # windows long finished
+    assert store.incr_counters([("device:a/60", 0, 60)]) == [1]
+
+
 def test_the_pipeline_uses_the_store(store, fake_llm):
     fake_llm.reply(llm_parse.PARSE_SYSTEM_PROMPT, labels.reply(labels.BIOGESIC))
     fake_llm.reply(description_agent.DESCRIPTION_SYSTEM_PROMPT, labels.GOOD_DESCRIPTION)
@@ -157,8 +165,8 @@ def test_postgres_migrations_are_recorded_and_rls_is_on(pg_store):
     assert [r[0] for r in pg_execute("SELECT version FROM schema_version ORDER BY 1")] == \
         [v for v, _ in migrate.migration_files()]
     rls = dict(pg_execute("SELECT relname, relrowsecurity FROM pg_class "
-                          "WHERE relname IN ('parses', 'answers', 'scan_log', 'schema_version')"))
-    assert rls == {"parses": True, "answers": True, "scan_log": True, "schema_version": True}
+                          "WHERE relname IN ('parses', 'answers', 'scan_log', 'rate_limits', 'schema_version')"))
+    assert rls == {"parses": True, "answers": True, "scan_log": True, "rate_limits": True, "schema_version": True}
 
 
 # --- failing open ---

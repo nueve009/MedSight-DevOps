@@ -132,6 +132,20 @@ connection in `MIGRATION_DATABASE_URL`); see `migrations/README.md` for the
 backend role and the restore steps. `tests/test_store.py` runs the same
 suite on SQLite and, when `MEDSIGHT_TEST_DATABASE_URL` is set, on Postgres.
 
+**Rate limits** (`app/ratelimit.py`, M4): `api.GUARDS` runs the API-key
+check (several named keys: `MEDSIGHT_API_KEYS`) and then
+`Limiter.check_request` (per device and per address, in fixed UTC minute/day
+windows; every request counts) before the pipeline. The pipeline calls its
+`budget` callable before each model call (`Limiter.spend_llm_call`: global
+`LLM_DAILY_BUDGET`, optional per-key caps), which raises
+`LLMBudgetExceeded`, a subclass of `LLMUnavailableError`. All of these give
+a 429 with `reason`, `spoken_text` and `Retry-After`. Counters live in the
+store's `rate_limits` table, with `MemoryCounters` as the fallback when the
+store fails, so an outage never turns the limits off. Buckets hold hashes,
+and the window length is part of the bucket name. A `BoundedSemaphore`
+(`MAX_CONCURRENT_SCANS`) gives a quick 503 when too many scans run at once.
+The client address comes from `CLIENT_IP_HEADER` (`x-real-ip` on Railway).
+
 **LLM provider** (`app/llm_client.py`):
 - **Groq:** calls the OpenAI-compatible `/chat/completions` endpoint with
   `response_format: json_object`. JSON mode doesn't enforce field names, so

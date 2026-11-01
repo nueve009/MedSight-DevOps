@@ -9,6 +9,7 @@ change is a new, higher-numbered file.
 |---|---|
 | `0001_cache_and_scan_log.sql` | `parses`, `answers`, `scan_log` tables; RLS on |
 | `0002_backend_role_grants.sql` | grants and RLS policies for the `medsight_backend` role only |
+| `0003_rate_limits.sql` | `rate_limits` counters (hashed buckets), same grants and RLS |
 
 ## First setup (once per Supabase project: staging and production)
 
@@ -48,7 +49,7 @@ environment, and keep the export folder private:
 
 ```powershell
 python -m scripts.store_admin export --out <private folder>
-python -m scripts.store_admin purge   # expired answers; scan_log OCR text older than 30 days
+python -m scripts.store_admin purge   # expired answers, finished rate windows, scan_log OCR text older than 30 days
 ```
 
 ## Restore

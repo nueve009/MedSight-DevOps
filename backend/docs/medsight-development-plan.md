@@ -253,10 +253,10 @@ Done when: the same test suite passes on SQLite and on a throwaway Postgres in C
 
 Goal: one device or script can't run up costs or crowd out other users.
 
-- [ ] Limits per device ID (6 a minute, 150 a day), per address (30 a minute), a global daily budget of about 180 Groq calls, and the web caps and API keys in section 3's call budget; counters in Supabase with an in-memory fallback when it's down.
-- [ ] Read the client address only from Railway's proxy header, set by the proxy itself.
-- [ ] 429 with spoken text and `Retry-After`.
-- [ ] The rest of section 7's items marked M4.
+- [x] Limits per device ID (150 a day; **15 a minute, not 6**, because 6 would block the "rescan every 5 seconds" in the done-when below), per address (30 a minute), a global daily budget of about 180 Groq calls, named API keys with optional per-key caps; counters in Supabase with an in-memory fallback when it's down. The web caps come with the web tier (M6).
+- [x] Read the client address only from Railway's proxy header, set by the proxy itself (`CLIENT_IP_HEADER=x-real-ip`).
+- [x] 429 with spoken text and `Retry-After`.
+- [x] The rest of section 7's items marked M4: `MEDSIGHT_API_KEYS`, an 80% budget warning in the logs, a cap on concurrent scans.
 
 Done when: a load test of 100 requests a second from one device gets 429s after the limit with no LLM calls made, and normal use (a rescan every 5 seconds) is never blocked.
 

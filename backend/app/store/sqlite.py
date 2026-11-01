@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS answers (
     sources     TEXT NOT NULL,         -- JSON list of URLs
     cached_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS rate_limits (
+    bucket        TEXT NOT NULL,
+    window_start  INTEGER NOT NULL,      -- Unix seconds
+    window_s      INTEGER NOT NULL,
+    count         INTEGER NOT NULL,
+    PRIMARY KEY (bucket, window_start)
+);
 """
 # Columns added in M3; older local cache files get them on open.
 _ADDED_COLUMNS = {"status": "TEXT NOT NULL DEFAULT 'active'", "expires_at": "TEXT"}
@@ -120,12 +127,23 @@ class SQLiteStore:
     def log_scan(self, record: dict) -> None:
         append_jsonl(config.RUN_LOG_PATH, record)
 
+    def incr_counters(self, items: list[tuple[str, int, int]]) -> list[int]:
+        """Add 1 to each (bucket, window_start, window_s) counter; return the new counts."""
+        with self._connect() as conn:
+            return [conn.execute("INSERT INTO rate_limits (bucket, window_start, window_s, count) "
+                                 "VALUES (?, ?, ?, 1) ON CONFLICT (bucket, window_start) "
+                                 "DO UPDATE SET count = count + 1 RETURNING count", item).fetchone()[0]
+                    for item in items]
+
     def purge(self) -> dict:
-        """Delete expired answers. (The local run log is the developer's own file.)"""
+        """Delete expired answers and finished rate windows. (The local run log is
+        the developer's own file.)"""
         with self._connect() as conn:
             n = conn.execute("DELETE FROM answers WHERE expires_at IS NOT NULL AND expires_at <= ?",
                              (now().isoformat(),)).rowcount
-        return {"expired_answers_deleted": n}
+            w = conn.execute("DELETE FROM rate_limits WHERE window_start + window_s < ?",
+                             (int(now().timestamp()),)).rowcount
+        return {"expired_answers_deleted": n, "rate_windows_deleted": w}
 
     def export_answers(self) -> list[dict]:
         with self._connect() as conn:

@@ -5,6 +5,71 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-01 — M4: rate limiting and abuse protection
+
+**Branch:** `backend/m3-m4-supabase-ratelimit` (M3 and M4 ship together,
+Mon's decision 2026-11-01).
+
+**Added**
+- `app/ratelimit.py`:
+  - Per device: 15 a minute and 150 a day. A request without a device ID
+    counts against a bucket made from its address.
+  - Per address: 30 a minute.
+  - Every request counts, refused ones included.
+  - Windows are fixed UTC minutes and days.
+- Daily model-call budget:
+  - The pipeline calls `budget()` before each parse and description call,
+    so cache hits cost nothing.
+  - 180 calls a UTC day for the whole service, plus optional per-key caps
+    (`KEY_DAILY_LLM_CAPS`).
+  - A warning is logged at 80%.
+- Counters:
+  - stored in the store's `rate_limits` table (`migrations/0003`; SQLite
+    has it too)
+  - one statement per check
+  - an in-memory fallback when the store fails
+  - hashed buckets
+  - finished windows deleted by `store_admin purge`
+- API:
+  - `api.GUARDS` checks the API key and then the limits, before the
+    pipeline.
+  - Every limit answers 429 with `reason` (`too_fast`, `daily_limit`,
+    `service_limit`), `spoken_text`, `retry_after_s` and `Retry-After`.
+  - The new spoken lines are in `speech.py` and covered by its tests.
+- Named API keys (`MEDSIGHT_API_KEYS`, `name=key,...`), all compared in
+  constant time. `MEDSIGHT_API_KEY` still works as `default`. The key name
+  is in the scan log.
+- `CLIENT_IP_HEADER` (Railway: `x-real-ip`; with `x-forwarded-for`, the
+  entry the proxy itself added). Empty means the TCP peer.
+- `MAX_CONCURRENT_SCANS` (8): past it, a quick 503 with `Retry-After: 2`.
+
+**Decision:** the plan's 6 a minute per device conflicted with its own
+done-when ("a rescan every 5 seconds is never blocked", which is 12 a
+minute). The default is 15 a minute, configurable.
+
+**Verified**
+- `pytest`: everything passes. `tests/test_ratelimit.py`:
+  - 60 back-to-back scans from one phone give 15 OKs, then only 429s, with
+    at most 2 model calls.
+  - 12 scans a minute are never blocked.
+  - The budget gives a 429 and spoken text, while cached scans still work.
+  - Rotating device IDs are caught by the address limit.
+  - The memory fallback keeps limiting when the store is down.
+  - There's no counter clash at midnight.
+  - Concurrency: a 503 when all slots are full.
+- The store tests and rate counters also pass on a local Postgres 16.
+- End to end on Postgres: migrations 0001 to 0003 apply, and the backend
+  role updates counters with no errors.
+- `ruff` is clean.
+
+**Open items**
+1. Railway variables are DevOps's: `CLIENT_IP_HEADER=x-real-ip`, the key
+   list, and the caps.
+2. The web-tier caps (3 a device, 20 a day) come with M6.
+3. Phone attestation is later (plan section 7, #1).
+
+---
+
 ## 2026-11-01 — M3: Supabase cache and scan log
 
 **Branch:** `backend/m3-supabase`, on top of `backend/m2-dataset-matching`

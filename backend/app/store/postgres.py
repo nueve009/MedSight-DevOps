@@ -147,16 +147,33 @@ class PostgresStore:
             (request_id_var.get(), record.get("device"), record.get("raw_ocr_text"),
              *(record.get(c) for c in _SCAN_COLUMNS), Jsonb(rest))))
 
+    def incr_counters(self, items: list[tuple[str, int, int]]) -> list[int]:
+        """Add 1 to each (bucket, window_start, window_s) counter in one statement; return the new counts."""
+        def q(cur):
+            cur.execute(
+                "INSERT INTO rate_limits (bucket, window_start, window_s, count) VALUES "
+                + ", ".join(["(%s, %s, %s, 1)"] * len(items))
+                + " ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count + 1 "
+                  "RETURNING bucket, window_start, count",
+                [v for item in items for v in item])
+            counts = {(r["bucket"], r["window_start"]): r["count"] for r in cur.fetchall()}
+            return [counts[(b, s)] for b, s, _ in items]
+        return self._run(q)
+
     def purge(self) -> dict:
-        """Delete expired answers, and OCR text in the scan log older than
-        config.SCAN_LOG_OCR_RETENTION_DAYS (the rest of each row stays)."""
+        """Delete expired answers and finished rate windows, and clear OCR text in
+        the scan log older than config.SCAN_LOG_OCR_RETENTION_DAYS (the rest of
+        each row stays)."""
         def q(cur):
             cur.execute("DELETE FROM answers WHERE expires_at IS NOT NULL AND expires_at <= now()")
             expired = cur.rowcount
+            cur.execute("DELETE FROM rate_limits WHERE window_start + window_s < extract(epoch FROM now())")
+            windows = cur.rowcount
             cur.execute("UPDATE scan_log SET ocr_text = NULL WHERE ocr_text IS NOT NULL "
                         "AND created_at < now() - make_interval(days => %s)",
                         (config.SCAN_LOG_OCR_RETENTION_DAYS,))
-            return {"expired_answers_deleted": expired, "scan_log_ocr_text_cleared": cur.rowcount}
+            return {"expired_answers_deleted": expired, "rate_windows_deleted": windows,
+                    "scan_log_ocr_text_cleared": cur.rowcount}
         return self._run(q)
 
     def export_answers(self) -> list[dict]:

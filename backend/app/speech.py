@@ -37,6 +37,9 @@ PHARMACIST_ADVICE = "Please check the label or ask a pharmacist before taking it
 
 MULTIPLE = "I can see more than one medicine. Please set the others aside and scan one at a time."
 SERVICE_BUSY = "The identification service is busy or unavailable right now. Please try again in a moment."
+TOO_FAST = "You're scanning very quickly. Please wait a few seconds and try again."
+DAILY_LIMIT = "This phone has reached today's scan limit. Please try again tomorrow."
+SERVICE_LIMIT = "The identification service has reached its limit for today. Please try again later."
 
 _RESCAN_OPENING = {
     "no_text": "I couldn't read any text.",
