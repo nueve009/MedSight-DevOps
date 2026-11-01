@@ -1,8 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { randomUUID } from "expo-crypto";
-
 import { HistoryItem, SavedMedicine, ScanResult, ScanStatus } from "@/types";
-import { supabase } from "./supabase";
+import { getUserId, supabase } from "./supabase";
 
 // ────────────────────────────────────────────
 // REMOTE DATABASE (Supabase)
@@ -10,43 +7,21 @@ import { supabase } from "./supabase";
 // Stores the scan history and the caregiver's "My medicines" list in Supabase.
 // Screens call the exported functions below and never query Supabase directly.
 //
-// Auth strategy: no user login screen yet. Each install gets a UUID that is
-// persisted in AsyncStorage and used as the device_id column in every row.
-// This keeps data isolated per device without requiring sign-in. When proper
-// auth is added later, swap getDeviceId() for the Supabase user ID.
+// Auth strategy: no login screen. Each install signs in anonymously
+// (getUserId() in supabase.ts) and every row carries that Supabase user ID.
+// Row-level security only lets a user read and write their own rows, so the
+// user_id filters below are for clarity, not the protection itself.
 //
-// Table schema: see the supabase_schema.md artifact (or PROGRESS.md).
+// Table schema and security rules: supabase/anon_auth_rls.sql.
 
 const HISTORY_LIMIT = 50;
-const DEVICE_ID_KEY = "@medsight/device_id";
-
-// ─── DEVICE ID ───
-
-// Returns the stable UUID for this install. Creates and persists one on first
-// call. All subsequent calls return the same value from AsyncStorage.
-let cachedDeviceId: string | null = null;
-
-async function getDeviceId(): Promise<string> {
-  if (cachedDeviceId) {
-    return cachedDeviceId;
-  }
-  const stored = await AsyncStorage.getItem(DEVICE_ID_KEY);
-  if (stored) {
-    cachedDeviceId = stored;
-    return stored;
-  }
-  const id = randomUUID();
-  await AsyncStorage.setItem(DEVICE_ID_KEY, id);
-  cachedDeviceId = id;
-  return id;
-}
 
 // ─── HISTORY ───
 
 // Supabase row shape for the history table.
 type HistoryRow = {
   id: number;
-  device_id: string;
+  user_id: string;
   status: string;
   name: string | null;
   strength: string | null;
@@ -54,13 +29,16 @@ type HistoryRow = {
 };
 
 // Saves one scan to Supabase.
-// The trim-to-50 is handled by a DB trigger (see supabase_schema.md).
+// The trim-to-50 is handled by a DB trigger (supabase/anon_auth_rls.sql).
 // If the trigger is not installed, the oldest rows beyond the limit stay
 // harmlessly — they won't be returned by getHistory().
 export async function addHistory(result: ScanResult): Promise<void> {
-  const device_id = await getDeviceId();
+  const user_id = await getUserId();
+  if (!user_id) {
+    return;
+  }
   const { error } = await supabase.from("history").insert({
-    device_id,
+    user_id,
     status: result.status,
     name: result.name ?? null,
     strength: result.strength ?? null,
@@ -71,13 +49,16 @@ export async function addHistory(result: ScanResult): Promise<void> {
   }
 }
 
-// Newest scan first, capped at HISTORY_LIMIT rows for this device.
+// Newest scan first, capped at HISTORY_LIMIT rows for this user.
 export async function getHistory(): Promise<HistoryItem[]> {
-  const device_id = await getDeviceId();
+  const user_id = await getUserId();
+  if (!user_id) {
+    return [];
+  }
   const { data, error } = await supabase
     .from("history")
     .select("id, status, name, strength, scanned_at")
-    .eq("device_id", device_id)
+    .eq("user_id", user_id)
     .order("scanned_at", { ascending: false })
     .limit(HISTORY_LIMIT);
 
@@ -100,7 +81,7 @@ export async function getHistory(): Promise<HistoryItem[]> {
 // Supabase row shape for the my_medicines table.
 type MedicineRow = {
   id: number;
-  device_id: string;
+  user_id: string;
   name: string;
   dose_note: string | null;
 };
@@ -115,11 +96,14 @@ function toSavedMedicine(row: MedicineRow): SavedMedicine {
 
 // Alphabetical, ignoring capital letters.
 export async function getMyMedicines(): Promise<SavedMedicine[]> {
-  const device_id = await getDeviceId();
+  const user_id = await getUserId();
+  if (!user_id) {
+    return [];
+  }
   const { data, error } = await supabase
     .from("my_medicines")
     .select("id, name, dose_note")
-    .eq("device_id", device_id)
+    .eq("user_id", user_id)
     .order("name", { ascending: true });
 
   if (error) {
@@ -131,11 +115,14 @@ export async function getMyMedicines(): Promise<SavedMedicine[]> {
 }
 
 export async function countMyMedicines(): Promise<number> {
-  const device_id = await getDeviceId();
+  const user_id = await getUserId();
+  if (!user_id) {
+    return 0;
+  }
   const { count, error } = await supabase
     .from("my_medicines")
     .select("id", { count: "exact", head: true })
-    .eq("device_id", device_id);
+    .eq("user_id", user_id);
 
   if (error) {
     console.error("[db] countMyMedicines error:", error.message);
@@ -146,18 +133,21 @@ export async function countMyMedicines(): Promise<number> {
 }
 
 // Returns false (and inserts nothing) when the same name is already saved.
-// The unique(device_id, name) DB constraint also enforces this on the server.
+// The unique(user_id, name) DB constraint also enforces this on the server.
 export async function addMyMedicine(
   name: string,
   doseNote?: string,
 ): Promise<boolean> {
-  const device_id = await getDeviceId();
+  const user_id = await getUserId();
+  if (!user_id) {
+    return false;
+  }
 
   // Check for an existing entry first (case-insensitive, matching SQLite behaviour).
   const { data: existing } = await supabase
     .from("my_medicines")
     .select("id")
-    .eq("device_id", device_id)
+    .eq("user_id", user_id)
     .ilike("name", name)
     .maybeSingle();
 
@@ -166,7 +156,7 @@ export async function addMyMedicine(
   }
 
   const { error } = await supabase.from("my_medicines").insert({
-    device_id,
+    user_id,
     name,
     dose_note: doseNote || null,
   });
@@ -180,12 +170,15 @@ export async function addMyMedicine(
 }
 
 export async function deleteMyMedicine(id: number): Promise<void> {
-  const device_id = await getDeviceId();
+  const user_id = await getUserId();
+  if (!user_id) {
+    return;
+  }
   const { error } = await supabase
     .from("my_medicines")
     .delete()
     .eq("id", id)
-    .eq("device_id", device_id); // safety: only delete your own rows
+    .eq("user_id", user_id); // safety: only delete your own rows
 
   if (error) {
     console.error("[db] deleteMyMedicine error:", error.message);
@@ -203,13 +196,16 @@ export async function findMyMedicine(
     return null;
   }
 
-  const device_id = await getDeviceId();
+  const user_id = await getUserId();
+  if (!user_id) {
+    return null;
+  }
 
   // Exact match (case-insensitive).
   const { data: exact } = await supabase
     .from("my_medicines")
     .select("id, name, dose_note")
-    .eq("device_id", device_id)
+    .eq("user_id", user_id)
     .ilike("name", name)
     .limit(1)
     .maybeSingle();
@@ -223,7 +219,7 @@ export async function findMyMedicine(
   const { data: prefix } = await supabase
     .from("my_medicines")
     .select("id, name, dose_note")
-    .eq("device_id", device_id)
+    .eq("user_id", user_id)
     .ilike("name", `${name} %`)
     .limit(1)
     .maybeSingle();
