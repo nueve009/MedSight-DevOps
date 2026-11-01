@@ -1,6 +1,12 @@
 name: Mobile Build
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - backend/**
+      - docs/**
+      - "**.md"
   workflow_dispatch:
 
 permissions:
