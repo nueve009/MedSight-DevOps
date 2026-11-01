@@ -6,7 +6,7 @@ Exported from the [Claude Doc](https://claude.ai/code/artifact/da749243-5380-446
 
 ## 1. Purpose and ground rules
 
-This plan takes the MedSight backend from today's prototype on `main` (commit `0a8144d`) to a pilot-ready service on Railway with Supabase. It covers eight milestones, M0 to M7. Each one ends with acceptance criteria that a reviewer can check. It reflects the team's decisions of 2026-10-19 and replaces the 10-phase plan of 2026-10-12.
+This plan takes the MedSight backend from today's prototype on `main` (commit `0a8144d`) to a pilot-ready service on Railway with Supabase. It covers eight milestones, M0 to M7, plus one optional milestone, M8 (voice chat), that starts only after the pilot gate is met. Each one ends with acceptance criteria that a reviewer can check. It reflects the team's decisions of 2026-10-19 and replaces the 10-phase plan of 2026-10-12.
 
 **Progress (2026-10-27):** M0 and M1 are merged into `main` (PR #23). The backend part of M2 is on branch `backend/m2-dataset-matching`; M2 finishes when the team's checked dataset and labeled scans are in.
 
@@ -24,7 +24,7 @@ This plan takes the MedSight backend from today's prototype on `main` (commit `0
 6. **Every behaviour change ships with tests,** and every response-shape change updates `README.md` and is agreed with the mobile team before merge.
 7. **One pull request per task,** small enough to review in one sitting, merged only when CI is green.
 
-**Out of scope:** user accounts and login (data stays on the phone), storing images, dosing or interaction advice, smart glasses, and on-device LLMs.
+**Out of scope:** user accounts and login (data stays on the phone), storing images, dosing or interaction advice, smart glasses, and on-device LLMs. Voice chat (M8) is not part of the pilot.
 
 ## 2. Baseline: what `main` has today
 
@@ -273,7 +273,7 @@ Done when: the app's development build completes scans against staging, and a pr
 
 Goal: unlisted medicines get a sourced, warned description from allow-listed sites only.
 
-- [ ] Search restricted to an allowlist kept in the repo (TheFilipinoDoctor plus the sites the team adds); any result from outside it is dropped in code, not only by the provider's filter.
+- [ ] Search restricted to an allowlist kept in the repo (TheFilipinoDoctor; since 2026-11-01 also `unilab.com.ph` and its subdomains, `labeling.pfizer.com` and `hellodoctor.com.ph`; plus any sites the team adds); any result from outside it is dropped in code, not only by the provider's filter.
 - [ ] Fetched page text is treated as untrusted input: delimited, length-capped, and the model is asked only to summarize uses.
 - [ ] Code gates before anything is spoken: the source mentions the ingredient or brand, no dose numbers or units in the output, length limit, every combination ingredient covered. A failed gate falls back to today's general description.
 - [ ] Spoken after the web warning, naming the source site. Cached and shared with every user as `pending_review` with a 30-day expiry (decided 2026-10-19); the team approves or rejects each one from the admin queue, and a rejected answer is searched again on the next scan.
@@ -291,6 +291,20 @@ Goal: the team can fix a bad answer in minutes, and the system has passed its pi
 - [ ] Runbook written (section 10).
 
 Done when: the pilot gate in section 11 is met.
+
+### M8. Voice chat over scan history and "my medicines" (L; optional, after the pilot gate)
+
+Goal: the user asks a spoken question about medicines they have scanned or saved ("What did I scan this morning?", "Which of my medicines is for fever?") and hears a short answer grounded only in their own list and the reviewed dataset. The coach suggested this on 2026-11-01. It starts only after M7's pilot gate is met, and nothing in M0 to M7 depends on it.
+
+- [ ] `POST /v2/chat`: speech-to-text runs on the phone, which sends the question text plus the relevant part of the user's scan history and "my medicines" (product IDs and names, never raw OCR text). The server stores neither the question nor the history; it logs only the request ID, latency and cost.
+- [ ] Retrieval: map the user's items to `kb/` products by `product_id` first. Vector search (Supabase `pgvector`, built from reviewed `passages.csv` by `kb_build.py`) is used only to pick which reviewed passage answers the question, never to identify a medicine. No Pinecone: the vectors live in the M3 Supabase project, so there's one service fewer to run and secure.
+- [ ] Answers come only from reviewed passages and the user's own list. When the answer isn't there, the reply says so ("I don't have reviewed information on that"). Web-tier answers are never used in chat.
+- [ ] The same code gates as M6 (no dose numbers or units, length limit), plus a fixed refusal for dosing, interaction and "should I take it" questions that points the user to a pharmacist or doctor.
+- [ ] The question and history are delimited as untrusted input (section 7, #15).
+- [ ] Chat has its own per-device daily limit and its own share of the global LLM budget, so it can't use up the budget scanning needs.
+- [ ] `speech.py` builds every chat template; the contract is added to `README.md` and agreed with the mobile team.
+
+Done when: on 50 labeled chat questions (history lookups, uses, dosing and interaction questions, medicines not in the dataset), 0 answers make a claim that isn't in a reviewed passage or the user's list, every dosing or interaction question gets the refusal, and the chat templates pass the TalkBack and VoiceOver review.
 
 ## 7. Security
 
@@ -312,6 +326,7 @@ The two threats that matter most are a crafted input making the app speak false 
 | 12 | Information leaks from the API | Internal errors, schema or prompts exposed | Generic error bodies with a request ID (details only in logs); `/docs` and `/openapi.json` off in production | M5 |
 | 13 | Unreviewed edits to `kb/` | A wrong "reviewed" fact | `CODEOWNERS` requires a second reviewer for `kb/`; `kb_build.py --check` in CI; checker must differ from entrant | M0, M2 (checker rule done; CODEOWNERS: DevOps) |
 | 14 | LLM or search provider keys leak | Charges on the team's accounts | Separate keys per environment; spend limits set at each provider; rotation steps in the runbook | M5 |
+| 15 | Prompt injection or personal data in voice chat (a question or history item that says "ignore your instructions"; a patient name in a saved item) | A made-up or dosing answer is spoken; personal data leaks into logs | Question and history delimited and length-capped; answers only from reviewed passages and the user's list; dose and refusal gates in code; the server stores neither questions nor history and never logs them | M8 |
 
 **Transport:** HTTPS only (Railway terminates TLS), with HSTS. The app pins nothing for now; certificate pinning is reconsidered only if the app moves beyond the pilot.
 
@@ -328,6 +343,7 @@ Tests prove the code does what we wrote; evaluation proves the system gives the 
 | Parse evaluation | `eval_parse.py` runs fixed OCR texts through the real model 3 times each; per-field accuracy | before any prompt or model change | no drop from the recorded baseline |
 | Dataset evaluation | `eval_kb.py` on at least 100 labeled scans (phone scans, blister foil, poor light, unlisted medicines, two products in view) | before every release | 0 wrong reviewed answers; at least 95% of unlisted medicines correctly not matched |
 | Web tier review | 20 unlisted medicines, two reviewers compare each answer with its source | before M6 is turned on, then monthly | 0 unsupported claims |
+| Chat evaluation (M8) | `eval_chat.py` on 50 labeled questions: history lookups, uses, dosing and interaction questions, medicines not in the dataset | before M8 is turned on, then before every release that changes chat | 0 unsupported claims; every dosing or interaction question refused |
 | Load | 20 concurrent scans for 5 minutes against staging | before the pilot | p95 latency under 4 s on a cache miss, under 500 ms on a hit; no errors |
 
 **Rules:**
@@ -417,7 +433,8 @@ The team should learn about a problem from an alert, not from a user. Railway ke
 
 | # | Decision | Needed by | My recommendation |
 | --- | --- | --- | --- |
-| 1 | Allowlist sites besides TheFilipinoDoctor (on the list since 2026-10-26; MIMS dropped) | M6 | Add MedlinePlus, DailyMed and the PH FDA site; nothing else at first |
+| 1 | Allowlist sites besides TheFilipinoDoctor (on the list since 2026-10-26; MIMS dropped) | M6 | Added 2026-11-01: `unilab.com.ph` (and subdomains), `labeling.pfizer.com`, `hellodoctor.com.ph`. Still open: MedlinePlus, DailyMed and the PH FDA public site (never the verification portal) |
 | 2 | ~~Wording for the ingredient tier~~ **Decided 2026-10-20** | M1 | "Our team hasn't reviewed this product yet. Based on its ingredients, …" |
 | 3 | OCR-confidence cut-off for the caveat | M2 | Set from the labeled scans so no wrong reviewed answer sits above it (0.55 for now) |
 | 4 | Supabase plan (free or paid) | M3 | Paid before the pilot for backups and no pausing |
+| 5 | Whether to build voice chat at all, and whether the app's Supabase history (PR #30) or only on-phone history feeds it | M8 | Decide after the pilot from user feedback; send only the items the question needs, as product IDs and names |
