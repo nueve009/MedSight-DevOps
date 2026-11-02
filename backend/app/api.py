@@ -28,6 +28,7 @@ from app.cache_store import CacheStore
 from app.llm_client import LLMUnavailableError
 from app.logging_setup import RequestIdMiddleware, configure_logging, request_id_var
 from app.pipeline import ScanRequest, identify, identify_scan
+from app.retrieval import KnowledgeBase
 from app.scan_rules import Block, CaptureHints
 from app.utils import hash_device_id
 
@@ -39,7 +40,10 @@ async def lifespan(app: FastAPI):
     configure_logging(config.LOG_LEVEL)
     config.ensure_dirs()
     app.state.cache = CacheStore()
-    log.info("startup", extra={"fields": {"llm_provider": config.LLM_PROVIDER}})
+    # The reviewed dataset, built into data/kb.sqlite by scripts/kb_build.py at deploy time.
+    app.state.kb = KnowledgeBase.load(config.KB_DB_PATH)
+    log.info("startup", extra={"fields": {"llm_provider": config.LLM_PROVIDER, "kb_version": app.state.kb.version,
+                                          "kb_products": len(app.state.kb.products)}})
     yield
 
 
@@ -98,8 +102,10 @@ def _service_busy(e: LLMUnavailableError) -> JSONResponse:
 
 
 @app.get("/health")
-def health() -> dict:
-    return {"status": "ok", "llm_provider": config.LLM_PROVIDER}
+def health(request: Request) -> dict:
+    kb = request.app.state.kb
+    return {"status": "ok", "llm_provider": config.LLM_PROVIDER, "kb_version": kb.version,
+            "kb_products": len(kb.products)}
 
 
 # --- v2 ---
@@ -173,7 +179,7 @@ def identify_v2_endpoint(req: IdentifyV2Request, request: Request,
               "device": hash_device_id(x_device_id), "block_count": len(req.blocks)},
     )
     try:
-        result = identify_scan(scan, request.app.state.cache)
+        result = identify_scan(scan, request.app.state.cache, request.app.state.kb)
     except LLMUnavailableError as e:
         return _service_busy(e)
     return {**result, "request_id": request_id_var.get()}
@@ -222,6 +228,6 @@ def identify_endpoint(req: IdentifyRequest, request: Request):
         "ocr_lines": [line.model_dump() for line in req.lines],
     }
     try:
-        return identify(raw_text, req.ocr_confidence, request.app.state.cache, meta=meta)
+        return identify(raw_text, req.ocr_confidence, request.app.state.cache, meta=meta, kb=request.app.state.kb)
     except LLMUnavailableError as e:
         return _service_busy(e)

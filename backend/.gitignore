@@ -98,3 +98,7 @@ sorted_output/
 cache_vault/
 # Photos of medicine boxes used to build kb/ (kept in the shared drive)
 evidence/
+# Raw scraped drafts for kb/ (unchecked; rows move into kb/*.csv only after the two-person check)
+kb/staging/
+
+kb/staging/

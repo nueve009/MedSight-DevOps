@@ -43,7 +43,7 @@ def test_reviewed_answer():
 
 
 def test_reviewed_prescription_answer_with_caveat():
-    assert speech.answer(BIOGESIC, speech.REVIEWED, DESCRIPTION, prescription=True, caveat=True) == (
+    assert speech.answer(BIOGESIC, speech.REVIEWED, DESCRIPTION, rx=True, caveat=True) == (
         "Biogesic, Paracetamol 500 milligrams. This is a prescription medicine. "
         "Our team has reviewed this information. Used to relieve mild pain and reduce fever. "
         "I'm not fully sure of this reading. Please check the label or ask a pharmacist before taking it.")

@@ -25,10 +25,19 @@ uvicorn app.api:app --reload                          # backend; docs at /docs
 python -m scripts.main [--save-captures]                  # webcam loop: SPACE = capture + run pipeline, q = quit
 python -m scripts.benchmark_ocr <dataset_root>            # dataset path is required
 python -m scripts.sort_packaging_images <dataset_root> <output_dir> [--min-text-regions 3]
-python -m scripts.kb_build --check                        # validate the verified dataset in kb/
+python -m scripts.kb_build --check [--kb-dir <folder>]    # validate the reviewed dataset in kb/
 python -m scripts.kb_build                                # validate + build data/kb.sqlite
+python -m scripts.kb_draft_descriptions                   # LLM drafts of spoken descriptions -> kb/staging/
+python -m scripts.eval_kb [--out report.json]             # labeled scans; exit 1 on any wrong reviewed answer
 python -m scripts.kb_make_scans sorted_output/packaging   # draft eval scans from images
 ```
+
+`kb/staging/` (git-ignored) holds the team's raw scraper output and the
+description review sheet. The TheFilipinoDoctor scraper
+(`scripts/tfd_scrape.py`, `tests/test_tfd_scrape.py`) is the team's local
+tool and **is never committed**: stage files by explicit path, and exclude
+it from lint (`ruff check . --exclude scripts/tfd_scrape.py --exclude
+tests/test_tfd_scrape.py`).
 
 `kb/` holds the hand-curated, two-person-checked ("reviewed") dataset of the
 supported medicines. `kb/README.md` explains how it's collected. **Never add or edit
@@ -74,9 +83,20 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    unbranded product with other ingredients; `blocks` heights drop small-print
    mentions). From attempt `MAX_SCAN_ATTEMPTS` a rescan becomes `gave_up`.
    An answer is `ok_caveat` when the phone's OCR confidence is below
-   `OCR_CAVEAT_THRESHOLD` (`None` = skipped, not 0). `partial_match_reason()`
-   is ready for M2's dataset match.
-5. **Answer cache** (`CacheStore.get_answer`), keyed by `utils.answer_key`:
+   `OCR_CAVEAT_THRESHOLD` (`None` = skipped, not 0).
+4b. **Dataset match** (`retrieval.KnowledgeBase.match`, loaded once from
+   `data/kb.sqlite` into `app.state.kb`; a missing file = empty dataset).
+   `reviewed`: exact brand or alias (or fuzzy brand ≥0.85) **and** the same
+   ingredient set and strengths, after synonyms (`name_key`, `brand_key`,
+   `normalize_strength`) → spoken with the dataset's spelling, its
+   `spoken_description`, and `speech.RX_LINE` for `Rx`. `partial`: an
+   **exact** listed brand whose contents disagree → rescan via
+   `scan_rules.partial_match_reason` (never for a fuzzy brand, so a near
+   miss never names a listed brand). `ingredient`: every ingredient has a
+   reviewed `spoken_description`. Several full matches with different
+   descriptions or Rx status are not answered as reviewed. Reviewed and
+   ingredient answers never use the answer cache or an LLM.
+5. **Answer cache** (`CacheStore.get_answer`, general tier only), keyed by `utils.answer_key`:
    brand + every (ingredient, strength) pair, sorted, with strengths
    normalized (`utils.normalize_strength`: "500 mg" = "500mg" = "500 MG").
    A combination never shares a key with one of its ingredients.
@@ -92,6 +112,8 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    description, the reading caveat, the pharmacist advice. Team-checked
    answers are called **"reviewed"**, never "verified" (decision 2026-10-20);
    v1 keeps its old `"not verified"` warning value for older app builds.
+   Internal names use `rx`, not "prescription", because CodeQL flagged the
+   old constant name as sensitive data (false positive, PR #23).
 
 Cache errors never fail a scan (`pipeline._cache_call` logs and carries on).
 

@@ -38,6 +38,7 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `app/llm_parse.py` - LLM parsing of OCR text into every product in view
   (brand, ingredients, strengths)
 - `app/scan_rules.py` - Rescan / multiple / give-up / caveat rules (pure functions)
+- `app/retrieval.py` - Matches a parsed label against the reviewed dataset (`data/kb.sqlite`)
 - `app/speech.py` - Every spoken sentence, in a fixed order
 - `app/llm_client.py` - LLM client: Groq (default) or local Ollama
 - `app/description_agent.py` - Medicine description generation
@@ -49,8 +50,11 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `app/utils.py` - Shared utilities
 - `scripts/benchmark_ocr.py` - OCR benchmarking
 - `scripts/sort_packaging_images.py` - Sorts dataset images into `sorted_output/`
-- `kb/` - Verified dataset of the 10 supported medicines (see `kb/README.md`)
+- `kb/` - Reviewed dataset of the supported medicines, sourced from
+  TheFilipinoDoctor and hand FDA-portal lookups (see `kb/README.md`)
 - `scripts/kb_build.py` - Validates `kb/` and builds `data/kb.sqlite`
+- `scripts/kb_draft_descriptions.py` - LLM drafts of spoken descriptions for the team to check
+- `scripts/eval_kb.py` - Runs the labeled scans; 0 wrong reviewed answers is the release gate
 - `scripts/kb_make_scans.py` - Drafts evaluation scans from dataset images
 
 Generated, gitignored folders (never commit them): `.venv/`, `data/`,
