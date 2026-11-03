@@ -90,7 +90,25 @@ class BodySizeLimitMiddleware:
         await self.app(scope, limited_receive, send)
 
 
+DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+
+
+class DocsGateMiddleware:
+    """Answers 404 for the API docs and schema unless config.API_DOCS is on
+    (read per request, so tests can switch it)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] in DOCS_PATHS and not config.API_DOCS:
+            await JSONResponse({"detail": "Not Found"}, status_code=404)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(title="MedSight backend", lifespan=lifespan)
+app.add_middleware(DocsGateMiddleware)
 app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(RequestIdMiddleware)   # added last = outermost, so even a 413 gets an ID
 

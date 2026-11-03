@@ -21,7 +21,7 @@ writes `captures/` relative to the working directory.
 pip install -r requirements-dev.txt                       # server + pytest, ruff, pip-audit
 pytest                                                    # all tests; the LLM is always faked
 ruff check .                                              # lint
-uvicorn app.api:app --reload                          # backend; docs at /docs
+uvicorn app.api:app --reload                          # backend; docs at /docs with API_DOCS=on
 python -m scripts.main [--save-captures]                  # webcam loop: SPACE = capture + run pipeline, q = quit
 python -m scripts.benchmark_ocr <dataset_root>            # dataset path is required
 python -m scripts.sort_packaging_images <dataset_root> <output_dir> [--min-text-regions 3]
@@ -32,6 +32,7 @@ python -m scripts.eval_kb [--out report.json]             # labeled scans; exit 
 python -m scripts.kb_make_scans sorted_output/packaging   # draft eval scans from images
 python -m scripts.migrate [--check]                       # apply migrations/ to Supabase (MIGRATION_DATABASE_URL)
 python -m scripts.store_admin export --out <dir> | restore <file> | purge   # nightly backup and cleanup
+python -m scripts.smoke_test --url <base url>              # after a deploy; key in SMOKE_API_KEY
 ```
 
 `kb/staging/` (git-ignored) holds the team's raw scraper output and the
