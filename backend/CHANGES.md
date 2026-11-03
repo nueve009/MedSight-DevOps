@@ -5,6 +5,149 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-01 — M4: rate limiting and abuse protection
+
+**Branch:** `backend/m3-m4-supabase-ratelimit` (M3 and M4 ship together,
+Mon's decision 2026-11-01).
+
+**Added**
+- `app/ratelimit.py`:
+  - Per device: 15 a minute and 150 a day. A request without a device ID
+    counts against a bucket made from its address.
+  - Per address: 30 a minute.
+  - Every request counts, refused ones included.
+  - Windows are fixed UTC minutes and days.
+- Daily model-call budget:
+  - The pipeline calls `budget()` before each parse and description call,
+    so cache hits cost nothing.
+  - 180 calls a UTC day for the whole service, plus optional per-key caps
+    (`KEY_DAILY_LLM_CAPS`).
+  - A warning is logged at 80%.
+- Counters:
+  - stored in the store's `rate_limits` table (`migrations/0003`; SQLite
+    has it too)
+  - one statement per check
+  - an in-memory fallback when the store fails
+  - hashed buckets
+  - finished windows deleted by `store_admin purge`
+- API:
+  - `api.GUARDS` checks the API key and then the limits, before the
+    pipeline.
+  - Every limit answers 429 with `reason` (`too_fast`, `daily_limit`,
+    `service_limit`), `spoken_text`, `retry_after_s` and `Retry-After`.
+  - The new spoken lines are in `speech.py` and covered by its tests.
+- Named API keys (`MEDSIGHT_API_KEYS`, `name=key,...`), all compared in
+  constant time. `MEDSIGHT_API_KEY` still works as `default`. The key name
+  is in the scan log.
+- `CLIENT_IP_HEADER` (Railway: `x-real-ip`; with `x-forwarded-for`, the
+  entry the proxy itself added). Empty means the TCP peer.
+- `MAX_CONCURRENT_SCANS` (8): past it, a quick 503 with `Retry-After: 2`.
+
+**Decision:** the plan's 6 a minute per device conflicted with its own
+done-when ("a rescan every 5 seconds is never blocked", which is 12 a
+minute). The default is 15 a minute, configurable.
+
+**Verified**
+- `pytest`: everything passes. `tests/test_ratelimit.py`:
+  - 60 back-to-back scans from one phone give 15 OKs, then only 429s, with
+    at most 2 model calls.
+  - 12 scans a minute are never blocked.
+  - The budget gives a 429 and spoken text, while cached scans still work.
+  - Rotating device IDs are caught by the address limit.
+  - The memory fallback keeps limiting when the store is down.
+  - There's no counter clash at midnight.
+  - Concurrency: a 503 when all slots are full.
+- The store tests and rate counters also pass on a local Postgres 16.
+- End to end on Postgres: migrations 0001 to 0003 apply, and the backend
+  role updates counters with no errors.
+- `ruff` is clean.
+
+**Open items**
+1. Railway variables are DevOps's: `CLIENT_IP_HEADER=x-real-ip`, the key
+   list, and the caps.
+2. The web-tier caps (3 a device, 20 a day) come with M6.
+3. Phone attestation is later (plan section 7, #1).
+
+---
+
+## 2026-11-01 — M3: Supabase cache and scan log
+
+**Branch:** `backend/m3-supabase`, on top of `backend/m2-dataset-matching`
+(M2's PR is open; rebase onto `main` once it's merged).
+
+**Added**
+- `app/store/`, which replaces `app/cache_store.py`. It's one `Store`
+  interface with two versions, chosen by `CACHE_BACKEND`:
+  - `SQLiteStore` is the default, with the same file and run log as before.
+    Older cache files gain the new columns when opened.
+  - `PostgresStore` is for Supabase.
+- Both versions:
+  - store only `general` and `web` answers
+  - treat `rejected` and expired answers as a miss
+  - give web answers a 30-day expiry
+  - support get, set, delete and list, plus export, import and purge
+- Fail open:
+  - 2 s to connect and 1 s per query (`SET LOCAL statement_timeout`).
+  - After a failure, the circuit breaker skips the database for 60 s and
+    logs one `database skipped` warning.
+  - `pipeline._cache_call` ignores `StoreSkipped` silently.
+  - Prepared statements are off, so Supabase's transaction pooler works.
+  - A missing `DATABASE_URL` with `CACHE_BACKEND=postgres` stops the
+    service from starting, because that's a configuration mistake, not an
+    outage.
+- The scan log moves behind the store (`log_scan`):
+  - SQLite: `logs/run_log.jsonl`, as before.
+  - Postgres: the `scan_log` table, with the OCR text in its own column and
+    left out of the `record` JSON.
+- `migrations/0001_cache_and_scan_log.sql`: the `parses`, `answers` and
+  `scan_log` tables, with RLS on.
+- `migrations/0002_backend_role_grants.sql`: grants and RLS policies for
+  the `medsight_backend` role only, and everything revoked from `anon`,
+  `authenticated` and `PUBLIC`.
+- `scripts/migrate.py`: applies the numbered files in order, one transaction
+  each, recorded in `schema_version`. `--check` lists what's pending.
+- `scripts/store_admin.py`: `export`, `restore` and `purge`. Purge deletes
+  expired answers and clears scan-log OCR text after 30 days.
+- `migrations/README.md`: role setup, first deploy, outage behavior, the
+  nightly jobs and the restore steps.
+- `/health`'s startup log line includes `cache_backend`.
+- Dependencies: `psycopg[binary]==3.3.6`, `psycopg-pool==3.3.3`
+  (`pip-audit`: no known vulnerabilities).
+
+**Decision:** the plan said "RLS on, no policies". With no policies, the
+backend role would need `BYPASSRLS`, which Supabase may not grant. Instead,
+RLS stays on and the only policies are for `medsight_backend`, so the public
+keys still open nothing.
+
+**Verified**
+- `pytest`: all tests pass on SQLite. `tests/test_store.py` also passes on
+  a local Postgres 16 (`pgserver`) with `MEDSIGHT_TEST_DATABASE_URL` set.
+  - A dead database fails in under 2 s and is then skipped in under 0.1 s.
+  - Scans keep answering with the database down.
+- End to end on a local Postgres:
+  - `migrate --check`, `migrate`, then `--check` again shows nothing pending.
+  - The backend role reads and writes, and a stand-in `anon` role gets
+    `InsufficientPrivilege`.
+  - `/v2/identify` answered a miss, then a hit.
+  - With Postgres stopped mid-run, the next scans still returned
+    `ok`/`general` in about 0.01 s.
+- `ruff` is clean (the scraper is excluded).
+
+**Open items**
+1. DevOps:
+   - Create the Supabase projects (staging and production, Singapore).
+   - Set `CACHE_BACKEND`, `DATABASE_URL` and `MIGRATION_DATABASE_URL` in
+     Railway.
+   - Run `migrate` on deploy.
+   - Schedule `store_admin export` and `purge` nightly.
+   - Add a Postgres service container to CI with
+     `MEDSIGHT_TEST_DATABASE_URL`.
+2. The first real Supabase connection (pooler user format
+   `medsight_backend.<project-ref>`) hasn't been tried yet.
+3. The restore test on the real database is planned for M6.
+
+---
+
 ## 2026-10-27 — M2: reviewed dataset and matching (backend part)
 
 **Branch:** `backend/m2-dataset-matching` (from `main` after M1 was merged).

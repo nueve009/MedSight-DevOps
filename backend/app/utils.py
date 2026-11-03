@@ -49,6 +49,11 @@ def hash_device_id(device_id: str | None) -> str | None:
     return _hash(f"device|{device_id}") if device_id else None
 
 
+def hash_address(address: str | None) -> str:
+    """Client addresses are only ever counted hashed (rate limits)."""
+    return _hash(f"addr|{address or 'unknown'}")
+
+
 def fence_untrusted(text: str, tag: str) -> str:
     """Wrap untrusted text (OCR, fetched pages) in <tag>...</tag> for a prompt.
     Any copy of the tag inside the text is removed, so it can't close the fence early."""

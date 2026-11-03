@@ -38,6 +38,38 @@ def ensure_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
+# --- Cache and scan log (app/store/) ---
+# "sqlite" (local file, the default) or "postgres" (Supabase on Railway).
+CACHE_BACKEND = os.environ.get("CACHE_BACKEND", "sqlite").lower()
+# Postgres connection string for the backend's own role (never the owner's).
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_SSLMODE = os.environ.get("DATABASE_SSLMODE", "require")   # TLS to Supabase; "disable" only locally
+DB_CONNECT_TIMEOUT_S = float(os.environ.get("DB_CONNECT_TIMEOUT_S", "2"))
+DB_QUERY_TIMEOUT_MS = int(os.environ.get("DB_QUERY_TIMEOUT_MS", "1000"))
+# After a database failure, scans skip it for this long instead of waiting on it each time.
+DB_SKIP_AFTER_FAILURE_S = float(os.environ.get("DB_SKIP_AFTER_FAILURE_S", "60"))
+DB_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "5"))
+WEB_ANSWER_TTL_DAYS = 30            # web answers stop being served after this (decided 2026-10-19)
+SCAN_LOG_OCR_RETENTION_DAYS = 30    # OCR text is cleared from scan_log after this (privacy, plan section 7 #9)
+
+# --- Rate limits and the daily LLM budget (app/ratelimit.py) ---
+# Per device (X-Device-Id, hashed) and per client address, in fixed UTC
+# windows. The plan's 6 a minute would block a rescan every 5 seconds, so the
+# default allows 15.
+RATE_DEVICE_PER_MINUTE = int(os.environ.get("RATE_DEVICE_PER_MINUTE", "15"))
+RATE_DEVICE_PER_DAY = int(os.environ.get("RATE_DEVICE_PER_DAY", "150"))
+RATE_ADDRESS_PER_MINUTE = int(os.environ.get("RATE_ADDRESS_PER_MINUTE", "30"))
+# Model calls (parse + describe) a UTC day for the whole service, under Groq's free tier.
+LLM_DAILY_BUDGET = int(os.environ.get("LLM_DAILY_BUDGET", "180"))
+# Optional caps per app key name, e.g. "testers-a=60,testers-b=60", so tester
+# groups can't use up the pitch devices' share.
+KEY_DAILY_LLM_CAPS = os.environ.get("KEY_DAILY_LLM_CAPS", "")
+# Where the real client address comes from. Empty = the TCP peer (local runs).
+# On Railway set "x-real-ip": its edge proxy overwrites that header.
+CLIENT_IP_HEADER = os.environ.get("CLIENT_IP_HEADER", "").lower()
+# Scans running at once; past it, a quick "busy, try again" (503).
+MAX_CONCURRENT_SCANS = int(os.environ.get("MAX_CONCURRENT_SCANS", "8"))
+
 # --- Logging ---
 # One JSON object per line on stdout (see logging_setup.py).
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -57,6 +89,9 @@ LLM_TIMEOUT_S = float(os.environ.get("LLM_TIMEOUT_S", "15"))
 # Shared secret the mobile app sends in the X-API-Key header. If unset, the
 # API refuses every /identify request rather than running open.
 MEDSIGHT_API_KEY = os.environ.get("MEDSIGHT_API_KEY", "")
+# More keys, as "name=key,name=key" (one per app release or tester group), so a
+# key can be retired or cut off on its own. Names show up in logs, keys never.
+MEDSIGHT_API_KEYS = os.environ.get("MEDSIGHT_API_KEYS", "")
 MAX_BODY_BYTES = 64 * 1024     # whole request body; larger gets 413
 MAX_OCR_TEXT_CHARS = 5000      # request validation; longer gets 422
 MAX_BLOCKS = 500               # text blocks per request; more gets 422

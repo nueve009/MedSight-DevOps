@@ -237,24 +237,26 @@ Done when: all 29 validate; the evaluation on at least 100 labeled scans (includ
 
 ### M3. Supabase (M)
 
+M3 and M4 ship together on one branch and one PR, `backend/m3-m4-supabase-ratelimit` (decided 2026-11-01).
+
 Goal: durable cache and logs that survive redeploys, without making scans depend on the database.
 
-- [ ] A `Store` interface (get, set, delete, list) with a SQLite version for tests and a Postgres version for Railway, chosen by `CACHE_BACKEND`.
-- [ ] Numbered SQL migrations for the tables in section 4; RLS on, no policies; a dedicated backend role.
-- [ ] Fail open: connect timeout 2 s, query timeout 1 s; after a failure, skip the database for 60 s (circuit breaker) and log it.
-- [ ] Web answers expire after 30 days. (Reviewed and ingredient answers aren't cached: since M2 they're served from `kb/` in memory.)
-- [ ] Nightly export job and a written restore procedure.
+- [x] A `Store` interface (get, set, delete, list) with a SQLite version for tests and a Postgres version for Railway, chosen by `CACHE_BACKEND` (`app/store/`).
+- [x] Numbered SQL migrations for the tables in section 4; RLS on; a dedicated backend role. M3 adds `parses`, `answers` and `scan_log`; `rate_limits` comes with M4 and `audit_log` with M7. RLS policies exist only for the backend role, so the public keys still open nothing (no BYPASSRLS needed).
+- [x] Fail open: connect timeout 2 s, query timeout 1 s; after a failure, skip the database for 60 s (circuit breaker) and log it.
+- [x] Web answers expire after 30 days. (Reviewed and ingredient answers aren't cached: since M2 they're served from `kb/` in memory.)
+- [x] Nightly export job and a written restore procedure (`scripts/store_admin.py`, `migrations/README.md`; scheduling it on Railway is DevOps's).
 
 Done when: the same test suite passes on SQLite and on a throwaway Postgres in CI, and killing the database mid-test still returns answers.
 
-### M4. Rate limiting and abuse protection (M)
+### M4. Rate limiting and abuse protection (M; ships with M3)
 
 Goal: one device or script can't run up costs or crowd out other users.
 
-- [ ] Limits per device ID (6 a minute, 150 a day), per address (30 a minute), a global daily budget of about 180 Groq calls, and the web caps and API keys in section 3's call budget; counters in Supabase with an in-memory fallback when it's down.
-- [ ] Read the client address only from Railway's proxy header, set by the proxy itself.
-- [ ] 429 with spoken text and `Retry-After`.
-- [ ] The rest of section 7's items marked M4.
+- [x] Limits per device ID (150 a day; **15 a minute, not 6**, because 6 would block the "rescan every 5 seconds" in the done-when below), per address (30 a minute), a global daily budget of about 180 Groq calls, named API keys with optional per-key caps; counters in Supabase with an in-memory fallback when it's down. The web caps come with the web tier (M6).
+- [x] Read the client address only from Railway's proxy header, set by the proxy itself (`CLIENT_IP_HEADER=x-real-ip`).
+- [x] 429 with spoken text and `Retry-After`.
+- [x] The rest of section 7's items marked M4: `MEDSIGHT_API_KEYS`, an 80% budget warning in the logs, a cap on concurrent scans.
 
 Done when: a load test of 100 requests a second from one device gets 429s after the limit with no LLM calls made, and normal use (a rescan every 5 seconds) is never blocked.
 

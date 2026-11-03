@@ -66,8 +66,8 @@ def default_settings(monkeypatch):
 
 @pytest.fixture
 def cache(tmp_path):
-    from app.cache_store import CacheStore
-    return CacheStore(tmp_path / "cache.sqlite")
+    from app.store.sqlite import SQLiteStore
+    return SQLiteStore(tmp_path / "cache.sqlite")
 
 
 @pytest.fixture(autouse=True)
