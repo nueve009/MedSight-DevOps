@@ -15,6 +15,8 @@ What is stored:
             kb/ in memory.
 - scan log: one record per scan
 - rate counters: fixed-window counts for app/ratelimit.py
+- audit log: every admin write to answers (app/admin.py), append-only. An
+            admin write and its audit row are one transaction.
 
 Answer status: "active" and "pending_review" are served, "rejected" is a miss
 (searched again on the next scan). An answer past its expires_at is a miss.
@@ -53,6 +55,13 @@ class Store(Protocol):
     def purge(self) -> dict: ...
     def export_answers(self) -> list[dict]: ...
     def import_answers(self, rows: Iterable[dict]) -> int: ...
+    # Admin (app/admin.py): any status, expired rows included.
+    def read_answer(self, cache_key: str) -> Optional[dict]: ...
+    def admin_update_answer(self, cache_key: str, admin: str, status: Optional[str] = None,
+                            description: Optional[str] = None) -> Optional[tuple[dict, dict]]: ...
+    def admin_delete_answer(self, cache_key: str, admin: str) -> Optional[dict]: ...
+    def list_audit(self, limit: int = 100) -> list[dict]: ...
+    def export_audit(self) -> list[dict]: ...
     def close(self) -> None: ...
 
 
@@ -69,6 +78,11 @@ def check_answer(tier: str, status: str) -> None:
     if tier not in ("general", "web"):
         raise ValueError(f"tier {tier!r} is never cached")   # reviewed and ingredient come from kb/
     if status not in ANSWER_STATUSES:
+        raise ValueError(f"unknown answer status {status!r}")
+
+
+def check_status(status: Optional[str]) -> None:
+    if status is not None and status not in ANSWER_STATUSES:
         raise ValueError(f"unknown answer status {status!r}")
 
 

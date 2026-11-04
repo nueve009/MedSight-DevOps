@@ -10,6 +10,7 @@ change is a new, higher-numbered file.
 | `0001_cache_and_scan_log.sql` | `parses`, `answers`, `scan_log` tables; RLS on |
 | `0002_backend_role_grants.sql` | grants and RLS policies for the `medsight_backend` role only |
 | `0003_rate_limits.sql` | `rate_limits` counters (hashed buckets), same grants and RLS |
+| `0004_audit_log.sql` | `audit_log` of admin writes; the backend role can only read and add rows |
 
 ## First setup (once per Supabase project: staging and production)
 
@@ -65,5 +66,6 @@ python -m scripts.store_admin purge   # expired answers, finished rate windows, 
    Rows with the same `cache_key` are replaced; others are left alone.
 4. Check: `/health` answers, and a scan of a cached product says `"cache": "hit"`.
 
-Only answers are exported. The parse cache rebuilds itself, and the scan log
-isn't restored.
+Export writes the answers and the audit log (`audit-<UTC time>.jsonl`, kept as
+a record; restore doesn't load it). The parse cache rebuilds itself, and the
+scan log isn't restored.

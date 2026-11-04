@@ -25,7 +25,7 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 
 from app import config
 from app.logging_setup import request_id_var
-from app.store import SERVED_STATUSES, StoreSkipped, StoreUnavailable, check_answer, expires_at, now
+from app.store import SERVED_STATUSES, StoreSkipped, StoreUnavailable, check_answer, check_status, expires_at, now
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -61,6 +61,15 @@ def _answer(row: dict) -> dict:
             "description": row["description"], "sources": row["source_urls"], "status": row["status"],
             "cached_at": row["created_at"].isoformat(),
             "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None}
+
+
+def _audit_row(row: dict) -> dict:
+    return {"id": row["id"], "created_at": row["created_at"].isoformat(), "admin": row["admin"],
+            "action": row["action"], "cache_key": row["cache_key"], "before": row["before"], "after": row["after"]}
+
+
+def _json(answer: Optional[dict]) -> Optional[Jsonb]:
+    return Jsonb(answer) if answer is not None else None
 
 
 class PostgresStore:
@@ -199,6 +208,59 @@ class PostgresStore:
                      r["status"], datetime.fromisoformat(r["cached_at"]),
                      datetime.fromisoformat(r["expires_at"]) if r.get("expires_at") else None))
             return len(rows)
+        return self._run(q)
+
+    # --- admin (app/admin.py): each write and its audit row in one transaction ---
+
+    def read_answer(self, cache_key: str) -> Optional[dict]:
+        def q(cur):
+            cur.execute("SELECT * FROM answers WHERE cache_key = %s", (cache_key,))
+            row = cur.fetchone()
+            return _answer(row) if row else None
+        return self._run(q)
+
+    @staticmethod
+    def _audit(cur, admin: str, action: str, cache_key: str, before: dict, after: Optional[dict]) -> None:
+        cur.execute("INSERT INTO audit_log (admin, action, cache_key, before, after) VALUES (%s, %s, %s, %s, %s)",
+                    (admin, action, cache_key, Jsonb(before), _json(after)))
+
+    def admin_update_answer(self, cache_key: str, admin: str, status: Optional[str] = None,
+                            description: Optional[str] = None) -> Optional[tuple[dict, dict]]:
+        check_status(status)
+
+        def q(cur):
+            cur.execute("SELECT * FROM answers WHERE cache_key = %s FOR UPDATE", (cache_key,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            cur.execute("UPDATE answers SET status = COALESCE(%s, status), description = COALESCE(%s, description) "
+                        "WHERE cache_key = %s RETURNING *", (status, description, cache_key))
+            before, after = _answer(row), _answer(cur.fetchone())
+            self._audit(cur, admin, "update", cache_key, before, after)
+            return before, after
+        return self._run(q)
+
+    def admin_delete_answer(self, cache_key: str, admin: str) -> Optional[dict]:
+        def q(cur):
+            cur.execute("DELETE FROM answers WHERE cache_key = %s RETURNING *", (cache_key,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            before = _answer(row)
+            self._audit(cur, admin, "delete", cache_key, before, None)
+            return before
+        return self._run(q)
+
+    def list_audit(self, limit: int = 100) -> list[dict]:
+        def q(cur):
+            cur.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT %s", (limit,))
+            return [_audit_row(r) for r in cur.fetchall()]
+        return self._run(q)
+
+    def export_audit(self) -> list[dict]:
+        def q(cur):
+            cur.execute("SELECT * FROM audit_log ORDER BY id")
+            return [_audit_row(r) for r in cur.fetchall()]
         return self._run(q)
 
     def close(self) -> None:

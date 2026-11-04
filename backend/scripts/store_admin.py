@@ -2,7 +2,8 @@
 Maintenance for the cache store chosen by CACHE_BACKEND (Supabase on Railway).
 
 Usage (from backend/):
-    python -m scripts.store_admin export --out <folder>   # answers -> <folder>/answers-<UTC time>.jsonl
+    python -m scripts.store_admin export --out <folder>   # answers and audit log -> <folder>/answers-<UTC time>.jsonl
+                                                          # and <folder>/audit-<UTC time>.jsonl
     python -m scripts.store_admin restore <file.jsonl>    # load an export back (same cache_key = replaced)
     python -m scripts.store_admin purge                   # delete expired answers; clear scan_log OCR text
                                                           # older than 30 days
@@ -20,14 +21,22 @@ from pathlib import Path
 from app.store import make_store
 
 
-def export(store, out_dir: Path) -> Path:
-    rows = store.export_answers()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"answers-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.jsonl"
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
     with path.open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    print(f"exported {len(rows)} answers to {path}")
+
+
+def export(store, out_dir: Path) -> Path:
+    """Writes the answers and the audit log; returns the answers file (the one restore takes)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    rows = store.export_answers()
+    path = out_dir / f"answers-{stamp}.jsonl"
+    _write_jsonl(path, rows)
+    audit = store.export_audit()
+    _write_jsonl(out_dir / f"audit-{stamp}.jsonl", audit)
+    print(f"exported {len(rows)} answers and {len(audit)} audit rows to {out_dir}")
     return path
 
 

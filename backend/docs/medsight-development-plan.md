@@ -292,10 +292,16 @@ Done when: on 20 unlisted medicines reviewed by two people, zero answers contain
 
 Goal: the team can fix a bad answer in minutes, and the system has passed its pilot gate.
 
-- [ ] Admin routes (list, read, update, delete answers; read audit log) behind per-person admin keys, never the app key; every write goes to `audit_log`. Admins can never set `tier: reviewed`.
-- [ ] Failure drills: Groq down, search down, Supabase down, a key rotated.
+- [x] Admin routes (list, read, update, delete answers; read audit log) behind per-person admin keys, never the app key; every write goes to `audit_log`. Admins can never set `tier: reviewed`.
+- [x] Failure drills: Groq down, search down, Supabase down, a key rotated (`tests/test_drills.py`; by hand on staging per the runbook).
 - [ ] Accessibility pass with TalkBack and VoiceOver on every spoken template.
-- [ ] Runbook written (section 10).
+- [x] Runbook written (section 10): `backend/docs/runbook.md`.
+
+**Status:** the backend items are on branch `backend/m7-admin-runbook` (2026-11-04), on top of M6. The TalkBack and VoiceOver pass is the app team's. The pilot gate (section 11) still needs:
+- the 100 labeled scans
+- the drills by hand on staging
+- a teammate following the runbook
+- the privacy notice
 
 Done when: the pilot gate in section 11 is met.
 

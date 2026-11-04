@@ -5,6 +5,66 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-04 — M7: admin routes, audit log, failure drills, runbook
+
+**Branch:** `backend/m7-admin-runbook`, on top of `backend/m6-web-tier`.
+
+**Added**
+- `app/admin.py`: `/admin/answers` (list, read, PATCH, DELETE) and `/admin/audit`.
+  - Off unless `ADMIN_ENABLED`; every `/admin` path is a 404 until then.
+  - Per-person `ADMIN_KEYS` in `X-Admin-Key`, compared in constant time. An admin key that equals an app key is ignored, with a warning.
+  - PATCH changes only `status` and `description`. Anything else, `tier` included, is a 422, so nothing can be made "reviewed".
+  - An edited description must be 300 characters or fewer, with no dosing.
+- `migrations/0004_audit_log.sql`: who, action, cache key, before and after, when. The backend role can only read and add rows (no UPDATE or DELETE grant).
+- Store:
+  - `read_answer` (any status, expired too).
+  - `admin_update_answer` and `admin_delete_answer`, each writing the change and its audit row in one transaction.
+  - `list_audit` and `export_audit`. SQLite has the same table.
+  - Admin writes don't fail open: a database error is a 503 with nothing changed.
+- `store_admin export` also writes `audit-<time>.jsonl` (plan section 4: nightly export of answers and the audit log).
+- `tests/test_drills.py`. Each drill ends in a clear spoken message:
+  - Groq down, before and after the parse
+  - search down
+  - Supabase down (scans answer, and the limits run from memory)
+  - a key rotated
+  - the daily model budget used up
+- `docs/runbook.md`:
+  - deploy and rollback
+  - removing or fixing a bad answer
+  - the weekly web-answer review
+  - rotating each key
+  - restore
+  - adding a reviewed medicine
+  - provider outages
+  - the manual drills on staging
+  - alerts
+
+**Changed**
+- `DocsGateMiddleware` became `RouteGateMiddleware`, which also hides `/admin`.
+
+**Verified**
+- `pytest`: 391 pass. `test_admin.py` covers:
+  - access: disabled, wrong keys, app keys, a shared key
+  - approve, reject, fix and delete, each audited
+  - a refused change leaving no trace
+  - a database outage
+- On a local Postgres 16:
+  - the store suite and the rate-limit tests pass
+  - migration 0004 applies
+  - the backend role can add audit rows but is refused UPDATE and DELETE
+- `ruff` is clean.
+
+**Open items**
+1. DevOps: run `migrate` (0004), set `ADMIN_KEYS` per person, and keep `ADMIN_ENABLED` off on production except while fixing an answer.
+2. The pilot gate:
+   - 100 labeled scans
+   - the drills by hand on staging
+   - a teammate following the runbook
+   - TalkBack and VoiceOver (app team)
+   - the privacy notice
+
+---
+
 ## 2026-11-04 — M6: web search tier (fake model and search)
 
 **Branch:** `backend/m6-web-tier`, on top of `backend/m5-smoke-test-docs`.
