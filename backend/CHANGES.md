@@ -5,6 +5,62 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-04 — M6: web search tier (fake model and search)
+
+**Branch:** `backend/m6-web-tier`, on top of `backend/m5-smoke-test-docs`.
+
+**Decision (Mon, 2026-11-04):** the web tier uses the same Groq model as parsing, with a Tavily search for the pages. This replaces the plan's Claude Sonnet with web search.
+
+**Added**
+- `app/web_search.py`:
+  - `ALLOWED_SITES`:
+    - TheFilipinoDoctor
+    - `*.unilab.com.ph`
+    - `labeling.pfizer.com`
+    - Hello Doctor
+  - `site_name()` enforces the allowlist in code: https only, no port or login part, exact hosts (`www.` allowed), subdomains only for entries starting with `*.`.
+  - `tavily_search()`: one basic search with `include_domains`.
+  - `lookup()`:
+    - Results outside the allowlist are dropped and logged.
+    - A page must name the brand and every ingredient (with a few other names, such as acetaminophen).
+    - At most 2 pages go to Groq, fenced and capped at 4,000 characters.
+    - The JSON reply is gated: found, a valid source, no dosing, 300 characters at most, no "recognize", and every ingredient of a combination named.
+- Pipeline:
+  - The web tier runs for an unlisted, branded product after the scan rules pass, when there's no cached web answer and no live "not found" marker.
+  - Found: cached as `web` / `pending_review` (30-day expiry), shared, and spoken as the web warning, then "According to <site>, ...".
+  - Not found or a failed gate: a "not found" marker in the parse cache (`web-miss:` keys, 7 days), then the general tier.
+  - A search outage or a used-up cap: the general tier, with nothing cached.
+  - A cached general answer is replaced once a web answer is found.
+- `Limiter.spend_web_lookup`: 3 a device and 20 a day, counted only when a search runs. A warning is logged at 80%. Past a cap the scan gets the general tier, not a 429.
+- Config:
+  - `WEB_SEARCH_PROVIDER` and `TAVILY_API_KEY`: the web tier is off unless both are set.
+  - `WEB_SEARCH_TIMEOUT_S`
+  - `WEB_DEVICE_PER_DAY` and `WEB_DAILY_BUDGET`
+  - `WEB_MISS_TTL_DAYS`
+- `tests/conftest.py`: `FakeSearch` replaces `web_search.search` in every test. A search with no fake results set fails.
+
+**Verified**
+- `pytest`: 351 pass. `tests/test_web_search.py` covers:
+  - the allowlist and look-alike hosts
+  - the spoken order and the site name
+  - pending_review caching and a cache hit with no search
+  - expired and rejected answers being searched again
+  - each gate, including a page that tries to inject dosing
+  - fencing and the page caps
+  - "not found" caching, made-up names, and outages
+  - the caps per device and overall
+  - the API and v1 shapes
+  - the Tavily request and its failures
+- `ruff` is clean.
+
+**Open items**
+1. A Tavily API key (staging and production) and a spend limit on it. Then, a run against the real search.
+2. The done-when: two people review the answers for 20 unlisted medicines.
+3. The admin queue (approve or reject) is M7.
+4. Railway variables for the web tier (DevOps).
+
+---
+
 ## 2026-11-04 — M5: smoke test and API docs off (backend part)
 
 **Branch:** `backend/m5-smoke-test-docs`, from `main` after PR #42 (M3 and M4).

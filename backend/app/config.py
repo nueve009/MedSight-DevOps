@@ -64,11 +64,24 @@ LLM_DAILY_BUDGET = int(os.environ.get("LLM_DAILY_BUDGET", "180"))
 # Optional caps per app key name, e.g. "testers-a=60,testers-b=60", so tester
 # groups can't use up the pitch devices' share.
 KEY_DAILY_LLM_CAPS = os.environ.get("KEY_DAILY_LLM_CAPS", "")
+# Web lookups (app/web_search.py, M6): a search plus a model call, so they get
+# their own, lower caps, counted only when a search actually runs (plan section 3, #5).
+WEB_DEVICE_PER_DAY = int(os.environ.get("WEB_DEVICE_PER_DAY", "3"))
+WEB_DAILY_BUDGET = int(os.environ.get("WEB_DAILY_BUDGET", "20"))
 # Where the real client address comes from. Empty = the TCP peer (local runs).
 # On Railway set "x-real-ip": its edge proxy overwrites that header.
 CLIENT_IP_HEADER = os.environ.get("CLIENT_IP_HEADER", "").lower()
 # Scans running at once; past it, a quick "busy, try again" (503).
 MAX_CONCURRENT_SCANS = int(os.environ.get("MAX_CONCURRENT_SCANS", "8"))
+
+# --- Web tier (app/web_search.py, M6) ---
+# "tavily" turns the web tier on (with TAVILY_API_KEY set); empty = off, and
+# unlisted medicines get the general tier as before.
+WEB_SEARCH_PROVIDER = os.environ.get("WEB_SEARCH_PROVIDER", "").strip().lower()
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+WEB_SEARCH_TIMEOUT_S = float(os.environ.get("WEB_SEARCH_TIMEOUT_S", "8"))
+# A medicine the web tier couldn't answer isn't searched again for this long.
+WEB_MISS_TTL_DAYS = int(os.environ.get("WEB_MISS_TTL_DAYS", "7"))
 
 # --- Logging ---
 # One JSON object per line on stdout (see logging_setup.py).

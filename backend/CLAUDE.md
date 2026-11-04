@@ -99,12 +99,28 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    reviewed `spoken_description`. Several full matches with different
    descriptions or Rx status are not answered as reviewed. Reviewed and
    ingredient answers never use the answer cache or an LLM.
-5. **Answer cache** (`Store.get_answer`, general tier only), keyed by `utils.answer_key`:
+5. **Answer cache** (`Store.get_answer`, general and web tiers), keyed by `utils.answer_key`:
    brand + every (ingredient, strength) pair, sorted, with strengths
    normalized (`utils.normalize_strength`: "500 mg" = "500mg" = "500 MG").
    A combination never shares a key with one of its ingredients.
+5b. **Web tier** (`web_search.lookup`, M6; off unless `WEB_SEARCH_PROVIDER=tavily`
+   and `TAVILY_API_KEY`). It runs for a branded, unlisted product with no cached web
+   answer and no live "not found" marker (`web-miss:` keys in the parse cache,
+   `WEB_MISS_TTL_DAYS`). `Limiter.spend_web_lookup` caps lookups per device and per
+   day. Past a cap it raises `WebLimitReached`, and the scan gets the general tier.
+   - One Tavily search, restricted to `web_search.ALLOWED_SITES`. `site_name()`
+     drops anything else in code: https only, no port, exact hosts.
+   - The page must name the brand and every ingredient.
+   - At most 2 pages go to Groq in `<source_N>` fences, 4,000 characters each.
+   - Gates on the summary: no dosing, 300 characters at most, not "recognize",
+     and every ingredient of a combination named.
+   - Found: cached as `web` / `pending_review` (30-day expiry) and spoken as
+     "According to <site>, ...". Not found or a failed gate: a "not found" marker,
+     then the general tier. A search outage caches nothing.
+   - The server never fetches pages itself: the text comes from the provider.
+   - `tests/conftest.py` replaces `web_search.search` with `FakeSearch`.
 6. **Describe** (`description_agent.get_description`, the `general` tier),
-   only on a cache miss. `status` is `ok`, `not_recognized` or `failed`; a
+   when there's no web answer and no cached answer. `status` is `ok`, `not_recognized` or `failed`; a
    reply with a dose or schedule (`utils.contains_dosing`) or over 300
    characters is `failed`. Only `ok` is cached. The team decided
    (2026-10-08) that medicines outside the reviewed dataset still get this

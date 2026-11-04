@@ -92,6 +92,10 @@ pyttsx3.
 | `DB_CONNECT_TIMEOUT_S` / `DB_QUERY_TIMEOUT_MS` / `DB_SKIP_AFTER_FAILURE_S` | `2` / `1000` / `60` | Fail-open limits: past them a scan treats the cache as a miss, then skips the database for a while |
 | `MEDSIGHT_DATA_DIR` / `MEDSIGHT_LOGS_DIR` | `data/` / `logs/` | Point at a persistent disk on the cloud host |
 | `LOG_LEVEL` | `INFO` | Level for the JSON logs on stdout |
+| `WEB_SEARCH_PROVIDER` / `TAVILY_API_KEY` | — | `tavily` plus a key turns the web tier on. Empty = off: unlisted medicines get the general tier. |
+| `WEB_SEARCH_TIMEOUT_S` | `8` | Search timeout; past it the scan gets the general tier |
+| `WEB_DEVICE_PER_DAY` / `WEB_DAILY_BUDGET` | `3` / `20` | Web lookups per phone and for the whole service per UTC day; past them, the general tier (not a 429) |
+| `WEB_MISS_TTL_DAYS` | `7` | A medicine the web tier couldn't answer isn't searched again for this long |
 | `API_DOCS` | `off` | `on` serves `/docs`, `/redoc` and `/openapi.json`. Leave it off on staging and production. |
 
 ## Run the backend
@@ -198,7 +202,7 @@ Response (200):
   |---|---|---|
   | `reviewed` | the team-reviewed dataset in `kb/`: brand, every ingredient and strength matched | "Our team has reviewed this information." |
   | `ingredient` | not a listed product, but every ingredient has a team-reviewed description | "Our team hasn't reviewed this product yet. Based on its ingredients, ..." |
-  | `web` | allow-listed web search (from M6) | "This medicine isn't in our reviewed list. The following information comes from the web and hasn't been reviewed by our team." |
+  | `web` | allow-listed web search (M6; on when `WEB_SEARCH_PROVIDER=tavily`). The description is then spoken as "According to <site>, ...". `sources` holds the page URL. | "This medicine isn't in our reviewed list. The following information comes from the web and hasn't been reviewed by our team." |
   | `general` | the model's general knowledge (fallback) | "Warning: this medicine isn't in our reviewed list, so this is general information only and may be inaccurate." |
 
   Consider a distinct sound or vibration for anything other than `reviewed`.

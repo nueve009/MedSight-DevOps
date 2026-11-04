@@ -41,7 +41,8 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `app/retrieval.py` - Matches a parsed label against the reviewed dataset (`data/kb.sqlite`)
 - `app/speech.py` - Every spoken sentence, in a fixed order
 - `app/llm_client.py` - LLM client: Groq (default) or local Ollama
-- `app/description_agent.py` - Medicine description generation
+- `app/description_agent.py` - Medicine description generation (general tier)
+- `app/web_search.py` - Web tier: allow-listed search, Groq summary, safety gates
 - `app/store/` - cache and scan log: SQLite locally, Supabase Postgres on Railway (`CACHE_BACKEND`)
 - `migrations/` - numbered SQL files for Supabase, applied by `scripts/migrate.py`
 - `app/logging_setup.py` - JSON logs on stdout, request IDs
