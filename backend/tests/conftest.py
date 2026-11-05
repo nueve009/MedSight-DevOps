@@ -5,12 +5,14 @@ Shared test setup.
   into the repo.
 - llm_client.chat is replaced in every test. A test that doesn't install a
   fake reply fails loudly instead of calling a real LLM.
+- web_search.search is replaced the same way (FakeSearch), and the web tier is
+  off unless a test turns it on.
 """
 import json
 
 import pytest
 
-from app import config, llm_client
+from app import config, llm_client, web_search
 
 
 class FakeLLM:
@@ -62,6 +64,8 @@ def default_settings(monkeypatch):
     monkeypatch.setattr(config, "OCR_CAVEAT_THRESHOLD", 0.55)
     monkeypatch.setattr(config, "MAX_SCAN_ATTEMPTS", 3)
     monkeypatch.setattr(config, "MAX_PARSE_CHARS", 2000)
+    monkeypatch.setattr(config, "WEB_SEARCH_PROVIDER", "")
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "")
 
 
 @pytest.fixture
@@ -74,4 +78,29 @@ def cache(tmp_path):
 def fake_llm(monkeypatch):
     fake = FakeLLM()
     monkeypatch.setattr(llm_client, "chat", fake)
+    return fake
+
+
+class FakeSearch:
+    """Stands in for web_search.search. Results are set per test; a search with
+    none set fails loudly."""
+
+    def __init__(self):
+        self.results = None
+        self.error = None
+        self.queries: list[str] = []
+
+    def __call__(self, query: str):
+        self.queries.append(query)
+        if self.error:
+            raise self.error
+        if self.results is None:
+            raise AssertionError(f"Unexpected web search (no fake results set): {query!r}")
+        return self.results
+
+
+@pytest.fixture(autouse=True)
+def fake_search(monkeypatch):
+    fake = FakeSearch()
+    monkeypatch.setattr(web_search, "search", fake)
     return fake

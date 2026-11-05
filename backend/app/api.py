@@ -285,9 +285,10 @@ def identify_v2_endpoint(req: IdentifyV2Request, request: Request,
               "key": request.state.key_name},
     )
     budget = request.app.state.limiter.budget_for(request.state.key_name)
+    web_budget = request.app.state.limiter.web_budget_for(scan.meta["device"])
     try:
         with _scan_slot(request):
-            result = identify_scan(scan, request.app.state.cache, request.app.state.kb, budget)
+            result = identify_scan(scan, request.app.state.cache, request.app.state.kb, budget, web_budget)
     except LLMBudgetExceeded as e:
         return _limited("service_limit", e.retry_after_s)
     except LLMUnavailableError as e:
@@ -339,10 +340,12 @@ def identify_endpoint(req: IdentifyRequest, request: Request):
         "ocr_lines": [line.model_dump() for line in req.lines],
     }
     budget = request.app.state.limiter.budget_for(request.state.key_name)
+    # v1 sends no device ID, so its web lookups share one daily bucket.
+    web_budget = request.app.state.limiter.web_budget_for(None)
     try:
         with _scan_slot(request):
             return identify(raw_text, req.ocr_confidence, request.app.state.cache, meta=meta,
-                            kb=request.app.state.kb, budget=budget)
+                            kb=request.app.state.kb, budget=budget, web_budget=web_budget)
     except LLMBudgetExceeded as e:
         return _limited("service_limit", e.retry_after_s)
     except LLMUnavailableError as e:

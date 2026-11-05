@@ -8,8 +8,9 @@ own module.
     scan rules (scan_rules)        rescan / multiple / gave_up / ok / ok_caveat
     dataset match (retrieval)      reviewed -> answer from kb/; partial -> rescan;
                                    ingredient -> answer from reviewed ingredient text
-    answer cache                   (general tier only) keyed on brand + every ingredient and strength
-    description (description_agent, "general" tier, on a cache miss)
+    answer cache                   (general and web tiers) keyed on brand + every ingredient and strength
+    web lookup (web_search)        unlisted branded product, no cached web answer or "not found"
+    description (description_agent, "general" tier: no web answer and a cache miss)
     spoken text (speech)
 
 Reviewed and ingredient answers come from the dataset in memory, never from
@@ -27,9 +28,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from app import config, retrieval, scan_rules, speech
+from app import config, retrieval, scan_rules, speech, web_search
 from app.description_agent import get_description
 from app.llm_parse import PARSE_PROMPT_VERSION, ParsedProduct, ParseResult, parse_label
+from app.ratelimit import WebLimitReached
 from app.retrieval import KnowledgeBase, Match
 from app.scan_rules import Block, CaptureHints, Decision
 from app.store import Store, StoreSkipped
@@ -113,7 +115,37 @@ def _no_answer(decision: Decision) -> dict:
     return _response(decision, spoken)
 
 
-def _answer(decision: Decision, match: Match, cache: Store, record: dict, budget: Callable[[], None]) -> dict:
+def _web(product, key: str, cache: Store, record: dict, budget: Callable[[], None],
+         web_budget: Callable[[], None]) -> Optional[web_search.WebAnswer]:
+    """A new web answer (cached as pending_review), or None: the web tier is
+    off, the product has no brand, a recent search found nothing, a cap is used
+    up, or the search failed. Only a model failure raises."""
+    if not web_search.enabled() or not product.brand:
+        record["web"] = "off"
+        return None
+    if web_search.miss_is_live(_cache_call("get_web_miss", cache.get_parse, web_search.miss_key(key)), time.time()):
+        record["web"] = "cached_not_found"
+        return None
+    try:
+        web_budget()
+        found = web_search.lookup(product, record, budget)
+    except WebLimitReached:
+        record["web"] = "limit"
+        return None
+    except web_search.WebSearchUnavailable as e:
+        log.warning("web search unavailable", extra={"fields": {"error": str(e)}})
+        record["web"] = "unavailable"   # temporary: nothing cached, the next scan tries again
+        return None
+    if found is None:
+        _cache_call("set_web_miss", cache.set_parse, web_search.miss_key(key), web_search.miss_marker(time.time()))
+    else:
+        _cache_call("set_answer", cache.set_answer, key, speech.WEB, product.to_dict(), found.description,
+                    [found.source_url], "pending_review")
+    return found
+
+
+def _answer(decision: Decision, match: Match, cache: Store, record: dict, budget: Callable[[], None],
+            web_budget: Callable[[], None]) -> dict:
     caveat = decision.status == "ok_caveat"
     if match.kind == retrieval.REVIEWED:
         # Speak the dataset's own spelling, not the OCR's ("Bi0gesic" -> "Biogesic").
@@ -131,7 +163,11 @@ def _answer(decision: Decision, match: Match, cache: Store, record: dict, budget
 
     key = answer_key(product.brand, product.generics, product.strengths)
     cached = _cache_call("get_answer", cache.get_answer, key)
-    if cached:
+    found = None if cached and cached["tier"] == speech.WEB else _web(product, key, cache, record, budget,
+                                                                      web_budget)
+    if found:
+        tier, description, sources, cache_status = speech.WEB, found.description, [found.source_url], "miss"
+    elif cached:
         tier, description, sources, cache_status = cached["tier"], cached["description"], cached["sources"], "hit"
     else:
         budget()
@@ -143,7 +179,8 @@ def _answer(decision: Decision, match: Match, cache: Store, record: dict, budget
         if result["status"] == "ok":
             _cache_call("set_answer", cache.set_answer, key, tier, product.to_dict(), description, sources)
 
-    spoken = speech.answer(product, tier, description, caveat=caveat)
+    site = web_search.site_name(sources[0]) if tier == speech.WEB and sources else None
+    spoken = speech.answer(product, tier, description, caveat=caveat, source_site=site)
     return _response(decision, spoken, tier=tier, product=_product_json(product),
                      description=description, sources=sources, cache=cache_status)
 
@@ -159,7 +196,8 @@ def _finish(record: dict, response: dict, started: float, cache: Store) -> dict:
         **{k: record.get(k) for k in ("status", "rescan_reason", "hint", "tier", "cache", "parse_cache",
                                        "match", "matched_product_id", "kb_version", "attempt",
                                        "product_count", "parse_confidence", "description_status",
-                                       "parse_ms", "describe_ms", "client", "platform", "app_version", "device",
+                                       "parse_ms", "describe_ms", "web", "web_ms", "client", "platform",
+                                       "app_version", "device",
                                        "key")},
         "latency_ms": round((time.perf_counter() - started) * 1000),
     }})
@@ -167,12 +205,16 @@ def _finish(record: dict, response: dict, started: float, cache: Store) -> dict:
 
 
 def identify_scan(req: ScanRequest, cache: Store, kb: Optional[KnowledgeBase] = None,
-                  budget: Optional[Callable[[], None]] = None) -> dict:
+                  budget: Optional[Callable[[], None]] = None,
+                  web_budget: Optional[Callable[[], None]] = None) -> dict:
     """Run the post-OCR pipeline against the reviewed dataset kb (None = empty dataset).
     budget runs before each model call (ratelimit.Limiter.budget_for); None = no budget.
+    web_budget runs before each web lookup (Limiter.web_budget_for) and raises
+    WebLimitReached past a cap; None = no cap.
     Raises llm_client.LLMUnavailableError if the LLM can't be reached, or its
     subclass ratelimit.LLMBudgetExceeded when the budget is used up."""
     budget = budget or (lambda: None)
+    web_budget = web_budget or (lambda: None)
     kb = KnowledgeBase() if kb is None else kb
     started = time.perf_counter()
     record = {**req.meta, "raw_ocr_text": req.text, "ocr_confidence": req.ocr_confidence, "attempt": req.attempt}
@@ -203,7 +245,7 @@ def identify_scan(req: ScanRequest, cache: Store, kb: Optional[KnowledgeBase] = 
         # never answered, and named with the dataset's spelling.
         decision = scan_rules.rescan(match.reason, req.hints, req.attempt, match.product.as_parsed())
         return _finish(record, _no_answer(decision), started, cache)
-    return _finish(record, _answer(decision, match, cache, record, budget), started, cache)
+    return _finish(record, _answer(decision, match, cache, record, budget, web_budget), started, cache)
 
 
 # --- v1 adapter ---
@@ -213,10 +255,12 @@ V1_NOT_VERIFIED = "not verified"   # v1 warning value; kept as is for older app 
 
 def identify(raw_text: str, ocr_confidence: Optional[float], cache: Store,
              meta: Optional[dict] = None, kb: Optional[KnowledgeBase] = None,
-             budget: Optional[Callable[[], None]] = None) -> dict:
+             budget: Optional[Callable[[], None]] = None,
+             web_budget: Optional[Callable[[], None]] = None) -> dict:
     """POST /identify (v1). Same pipeline as v2, mapped to the v1 response shape:
     ok -> ok, ok_caveat -> low_confidence, everything else -> rescan."""
-    r = identify_scan(ScanRequest(text=raw_text, ocr_confidence=ocr_confidence, meta=meta or {}), cache, kb, budget)
+    r = identify_scan(ScanRequest(text=raw_text, ocr_confidence=ocr_confidence, meta=meta or {}), cache, kb, budget,
+                      web_budget)
     if r["status"] not in ANSWER_STATUSES:
         return {"status": "rescan", "brand_name": None, "generic_name": None, "dosage": None,
                 "description": None, "grounded": False, "source_url": None, "warnings": [],

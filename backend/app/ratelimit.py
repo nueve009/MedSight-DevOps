@@ -13,6 +13,11 @@ Per model call (Limiter.spend_llm_call), so cache hits cost nothing:
     per app key   config.KEY_DAILY_LLM_CAPS, optional, so one tester group can't
                   use up the pitch devices' share
 
+Per web lookup (Limiter.spend_web_lookup), only when a search actually runs:
+    per device    config.WEB_DEVICE_PER_DAY a day
+    global        config.WEB_DAILY_BUDGET a day
+Past either, the scan gets the general tier instead (WebLimitReached), not a 429.
+
 Windows are fixed: the current UTC minute or day. Counters live in the store
 (Supabase in production, shared by every instance). If the store fails, an
 in-memory counter takes over for this process, so a database outage never
@@ -50,6 +55,10 @@ class LLMBudgetExceeded(LLMUnavailableError):
     def __init__(self, retry_after_s: int):
         super().__init__("daily LLM budget reached")
         self.retry_after_s = retry_after_s
+
+
+class WebLimitReached(Exception):
+    """A web-lookup cap is used up: the scan falls back to the general tier."""
 
 
 @dataclass(frozen=True)
@@ -146,6 +155,23 @@ class Limiter:
         if any(n > c.limit for c, n in zip(counts, used, strict=True)):
             log.warning("llm budget reached", extra={"fields": {"key": key_name, "global_used": used[0]}})
             raise LLMBudgetExceeded(_window(now, DAY)[1])
+
+    def spend_web_lookup(self, device_hash: Optional[str]) -> None:
+        """Count one web lookup; raises WebLimitReached if it's over a cap.
+        device_hash is already hashed (the scan's meta); None shares one bucket."""
+        counts = [_Count(f"web:device:{device_hash or 'none'}", DAY, config.WEB_DEVICE_PER_DAY, DAILY_LIMIT),
+                  _Count("web:global", DAY, config.WEB_DAILY_BUDGET, SERVICE_LIMIT)]
+        used = self._incr(counts, self.clock())
+        if used[1] == int(0.8 * config.WEB_DAILY_BUDGET):
+            log.warning("web budget at 80%", extra={"fields": {"used": used[1], "budget": config.WEB_DAILY_BUDGET}})
+        over = [c.reason for c, n in zip(counts, used, strict=True) if n > c.limit]
+        if over:
+            log.info("web limit reached", extra={"fields": {"reason": over[0]}})
+            raise WebLimitReached(over[0])
+
+    def web_budget_for(self, device_hash: Optional[str]) -> Callable[[], None]:
+        """A callable the pipeline runs before each web lookup."""
+        return lambda: self.spend_web_lookup(device_hash)
 
     def _warn_at_80(self, used: int, now: float) -> None:
         day = _window(now, DAY)[0]

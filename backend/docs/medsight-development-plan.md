@@ -81,7 +81,7 @@ Decided 2026-10-19: no model is hosted on Railway. Every model call made during 
 | --- | --- | --- | --- |
 | Read the label (parse) | Groq `qwen/qwen3.8-27b` | Every scan that passes the input checks | Free tier now: 30 requests a minute, 1,000 requests and 200,000 tokens a day, shared by the whole Groq account, so about 200 scans a day. Developer plan once pitching starts, at about $0.001 a scan |
 | Descriptions of the 29 products and their ingredients | A local model run once on a laptop with `scripts/kb_draft_descriptions.py` (for example Ollama; tried with `qwen3.5:4b`) | Once, offline, before each dataset release | The team checks every sentence against the TheFilipinoDoctor source text; stored in `kb/` and spoken as reviewed |
-| Unlisted medicines (web tier) | Claude Sonnet 5.5 with the web search tool, allowlisted sites only | Cache miss for an unlisted medicine, after the scan rules pass | Paid per call, under the caps below |
+| Unlisted medicines (web tier) | Groq, the same model as parsing, summarizing pages from a Tavily search restricted to the allowlist (Mon, 2026-11-04; replaces Claude Sonnet 5.5 with web search) | Cache miss for an unlisted, branded medicine, after the scan rules pass | One search credit and one Groq call per lookup, under the caps below |
 | Fallback when the web tier can't run | Groq, the same model as parsing | Web cap reached, or the search failed its checks | The `general` tier: today's general description, spoken behind its warning |
 
 A self-hosted 3B to 4B model on Railway was compared and rejected: about $45 to $60 a month for a CPU-only service, an estimated 5 to 15 seconds per scan, and weaker reading of combination labels. The Groq limits come from a third-party summary read 2026-10-16 ([source](https://benchlm.ai/md/free-tier/groq.md)), so check the limits page in the Groq account before relying on them.
@@ -278,11 +278,13 @@ Done when: the app's development build completes scans against staging, and a pr
 
 Goal: unlisted medicines get a sourced, warned description from allow-listed sites only.
 
-- [ ] Search restricted to an allowlist kept in the repo (TheFilipinoDoctor; since 2026-11-01 also `unilab.com.ph` and its subdomains, `labeling.pfizer.com` and `hellodoctor.com.ph`; plus any sites the team adds); any result from outside it is dropped in code, not only by the provider's filter.
-- [ ] Fetched page text is treated as untrusted input: delimited, length-capped, and the model is asked only to summarize uses.
-- [ ] Code gates before anything is spoken: the source mentions the ingredient or brand, no dose numbers or units in the output, length limit, every combination ingredient covered. A failed gate falls back to today's general description.
-- [ ] Spoken after the web warning, naming the source site. Cached and shared with every user as `pending_review` with a 30-day expiry (decided 2026-10-19); the team approves or rejects each one from the admin queue, and a rejected answer is searched again on the next scan.
-- [ ] Claude Sonnet 5.5 with at most 2 searches and a short reply per call, a timeout of 8 s, about 3 lookups per device a day and about 20 overall, a cached "not found" result, an alert at 80%, and a monthly spend limit in the Anthropic console.
+- [x] Search restricted to an allowlist kept in the repo (TheFilipinoDoctor; since 2026-11-01 also `unilab.com.ph` and its subdomains, `labeling.pfizer.com` and `hellodoctor.com.ph`; plus any sites the team adds); any result from outside it is dropped in code, not only by the provider's filter.
+- [x] Fetched page text is treated as untrusted input: delimited, length-capped, and the model is asked only to summarize uses.
+- [x] Code gates before anything is spoken: the source mentions the ingredient or brand, no dose numbers or units in the output, length limit, every combination ingredient covered. A failed gate falls back to today's general description.
+- [x] Spoken after the web warning, naming the source site. Cached and shared with every user as `pending_review` with a 30-day expiry (decided 2026-10-19); the team approves or rejects each one from the admin queue, and a rejected answer is searched again on the next scan.
+- [x] ~~Claude Sonnet 5.5~~ Groq plus one Tavily search per lookup (Mon, 2026-11-04), a short reply, a timeout of 8 s, 3 lookups per device a day and 20 overall, a cached "not found" result (7 days), and a warning in the logs at 80%. Spend limits are set in the Tavily and Groq accounts (DevOps).
+
+**Status:** built and tested with a fake model and fake search on branch `backend/m6-web-tier` (2026-11-04). The server never fetches pages itself (the text comes from Tavily), so section 7, #5 has no fetch to protect. The admin queue for approving or rejecting answers is M7. Not yet done: a Tavily key, a run against the real search, and the review of 20 unlisted medicines.
 
 Done when: on 20 unlisted medicines reviewed by two people, zero answers contain a claim the source doesn't support, and cost per scan is measured.
 
