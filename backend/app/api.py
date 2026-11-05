@@ -10,6 +10,7 @@ Endpoints:
     GET  /health       liveness check for the cloud host
     POST /v2/identify  contract v2 (README.md): every product, scan rules, tiers
     POST /identify     contract v1, kept until every active app build uses v2
+    /admin/...         answer cache review and fixes (admin.py), off unless ADMIN_ENABLED
 
 Before any model call, each identify request passes the API key check and
 the rate limits (ratelimit.py): 429 with spoken text and Retry-After when a
@@ -28,7 +29,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app import config, speech
+from app import admin, config, speech
 from app.llm_client import LLMUnavailableError
 from app.logging_setup import RequestIdMiddleware, configure_logging, request_id_var
 from app.pipeline import ScanRequest, identify, identify_scan
@@ -93,24 +94,29 @@ class BodySizeLimitMiddleware:
 DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 
 
-class DocsGateMiddleware:
-    """Answers 404 for the API docs and schema unless config.API_DOCS is on
-    (read per request, so tests can switch it)."""
+class RouteGateMiddleware:
+    """Answers 404 for the API docs and schema unless config.API_DOCS is on, and
+    for every /admin path unless config.ADMIN_ENABLED is on (both read per
+    request, so tests can switch them)."""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"] in DOCS_PATHS and not config.API_DOCS:
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        hidden = ((path in DOCS_PATHS and not config.API_DOCS)
+                  or ((path == "/admin" or path.startswith("/admin/")) and not config.ADMIN_ENABLED))
+        if hidden:
             await JSONResponse({"detail": "Not Found"}, status_code=404)(scope, receive, send)
             return
         await self.app(scope, receive, send)
 
 
 app = FastAPI(title="MedSight backend", lifespan=lifespan)
-app.add_middleware(DocsGateMiddleware)
+app.add_middleware(RouteGateMiddleware)
 app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(RequestIdMiddleware)   # added last = outermost, so even a 413 gets an ID
+app.include_router(admin.router)
 
 
 def _api_keys() -> dict[str, str]:

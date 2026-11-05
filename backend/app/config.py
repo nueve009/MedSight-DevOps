@@ -108,6 +108,10 @@ MEDSIGHT_API_KEYS = os.environ.get("MEDSIGHT_API_KEYS", "")
 # /docs, /redoc and /openapi.json: off unless API_DOCS=on, so a deployed
 # service doesn't publish its schema (plan section 7, #12). Turn on locally.
 API_DOCS = os.environ.get("API_DOCS", "off").strip().lower() in ("1", "on", "true", "yes")
+# Admin routes (app/admin.py): off unless ADMIN_ENABLED=on; then one key per
+# person, as "name=key,name=key" (the name goes in the audit log, the key never).
+ADMIN_ENABLED = os.environ.get("ADMIN_ENABLED", "off").strip().lower() in ("1", "on", "true", "yes")
+ADMIN_KEYS = os.environ.get("ADMIN_KEYS", "")
 MAX_BODY_BYTES = 64 * 1024     # whole request body; larger gets 413
 MAX_OCR_TEXT_CHARS = 5000      # request validation; longer gets 422
 MAX_BLOCKS = 500               # text blocks per request; more gets 422

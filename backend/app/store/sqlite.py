@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
 from app import config
-from app.store import SERVED_STATUSES, check_answer, expires_at, now
+from app.store import SERVED_STATUSES, check_answer, check_status, expires_at, now
 from app.utils import append_jsonl
 
 _SCHEMA = """
@@ -29,6 +29,15 @@ CREATE TABLE IF NOT EXISTS answers (
     description TEXT NOT NULL,
     sources     TEXT NOT NULL,         -- JSON list of URLs
     cached_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TEXT NOT NULL,
+    admin       TEXT NOT NULL,
+    action      TEXT NOT NULL,         -- update | delete
+    cache_key   TEXT NOT NULL,
+    before      TEXT,                  -- JSON
+    after       TEXT                   -- JSON; NULL for a delete
 );
 CREATE TABLE IF NOT EXISTS rate_limits (
     bucket        TEXT NOT NULL,
@@ -161,6 +170,62 @@ class SQLiteStore:
                               json.dumps(r["sources"]), r["cached_at"], r["status"], r.get("expires_at")))
                 count += 1
         return count
+
+    # --- admin (app/admin.py) ---
+
+    def read_answer(self, cache_key: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM answers WHERE cache_key = ?", (cache_key,)).fetchone()
+        return self._answer(row) if row else None
+
+    @staticmethod
+    def _audit(conn: sqlite3.Connection, admin: str, action: str, cache_key: str, before: dict,
+               after: Optional[dict]) -> None:
+        conn.execute("INSERT INTO audit_log (created_at, admin, action, cache_key, before, after) "
+                     "VALUES (?, ?, ?, ?, ?, ?)",
+                     (now().isoformat(), admin, action, cache_key, json.dumps(before),
+                      json.dumps(after) if after is not None else None))
+
+    def admin_update_answer(self, cache_key: str, admin: str, status: Optional[str] = None,
+                            description: Optional[str] = None) -> Optional[tuple[dict, dict]]:
+        check_status(status)
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM answers WHERE cache_key = ?", (cache_key,)).fetchone()
+            if row is None:
+                return None
+            before = self._answer(row)
+            conn.execute("UPDATE answers SET status = COALESCE(?, status), description = COALESCE(?, description) "
+                         "WHERE cache_key = ?", (status, description, cache_key))
+            after = self._answer(conn.execute("SELECT * FROM answers WHERE cache_key = ?", (cache_key,)).fetchone())
+            self._audit(conn, admin, "update", cache_key, before, after)
+        return before, after
+
+    def admin_delete_answer(self, cache_key: str, admin: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM answers WHERE cache_key = ?", (cache_key,)).fetchone()
+            if row is None:
+                return None
+            before = self._answer(row)
+            conn.execute("DELETE FROM answers WHERE cache_key = ?", (cache_key,))
+            self._audit(conn, admin, "delete", cache_key, before, None)
+        return before
+
+    @staticmethod
+    def _audit_row(row: sqlite3.Row) -> dict:
+        record = dict(row)
+        record["before"] = json.loads(record["before"]) if record["before"] else None
+        record["after"] = json.loads(record["after"]) if record["after"] else None
+        return record
+
+    def list_audit(self, limit: int = 100) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [self._audit_row(r) for r in rows]
+
+    def export_audit(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()
+        return [self._audit_row(r) for r in rows]
 
     def close(self) -> None:
         pass

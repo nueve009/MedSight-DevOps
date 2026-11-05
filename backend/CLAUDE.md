@@ -173,6 +173,18 @@ The client address comes from `CLIENT_IP_HEADER` (`x-real-ip` on Railway).
   limits, timeouts (`LLM_TIMEOUT_S`, Groq) and bad keys. `app/api.py` maps it
   to a 503 with a spoken retry message and the request ID.
 
+**Admin** (`app/admin.py`, M7): the `/admin` routes list, read, update (status
+and description only) and delete cached answers, and read `audit_log`.
+- Off unless `ADMIN_ENABLED`. `api.RouteGateMiddleware` 404s every `/admin`
+  path, and `/docs` without `API_DOCS`.
+- Per-person `ADMIN_KEYS` (constant time). An admin key equal to an app key is
+  ignored.
+- `Store.admin_update_answer` / `admin_delete_answer` write the change and its
+  audit row in one transaction. Admin writes don't fail open: they give a 503.
+- The tier can't be changed, so admins can never set "reviewed".
+- `tests/test_drills.py` holds the failure drills; `docs/runbook.md` the manual
+  steps.
+
 **Auth** (`api.require_api_key`): checks the `X-API-Key` header against
 `MEDSIGHT_API_KEY` using a constant-time comparison. If the server key isn't
 set, it fails closed with a 503. `BodySizeLimitMiddleware` refuses bodies

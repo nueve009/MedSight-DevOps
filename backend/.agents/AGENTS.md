@@ -43,6 +43,8 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `app/llm_client.py` - LLM client: Groq (default) or local Ollama
 - `app/description_agent.py` - Medicine description generation (general tier)
 - `app/web_search.py` - Web tier: allow-listed search, Groq summary, safety gates
+- `app/admin.py` - Admin routes for the answer cache (per-person keys, audit log)
+- `docs/runbook.md` - What to do when something needs fixing (bad answer, keys, outages, drills)
 - `app/store/` - cache and scan log: SQLite locally, Supabase Postgres on Railway (`CACHE_BACKEND`)
 - `migrations/` - numbered SQL files for Supabase, applied by `scripts/migrate.py`
 - `app/logging_setup.py` - JSON logs on stdout, request IDs

@@ -25,7 +25,7 @@ DEAD_URL = "postgresql://nobody:nothing@127.0.0.1:1/none"
 def _reset_postgres() -> None:
     import psycopg
     with psycopg.connect(PG_URL, sslmode=PG_SSLMODE, autocommit=True) as conn:
-        conn.execute("DROP TABLE IF EXISTS parses, answers, scan_log, rate_limits, schema_version CASCADE")
+        conn.execute("DROP TABLE IF EXISTS parses, answers, scan_log, rate_limits, audit_log, schema_version CASCADE")
         conn.execute(migrate._BOOTSTRAP)
         for version, path in migrate.migration_files():
             conn.execute(path.read_text(encoding="utf-8"))
@@ -105,6 +105,54 @@ def test_delete_answer(store):
     assert store.delete_answer("k") is True
     assert store.delete_answer("k") is False
     assert store.get_answer("k") is None
+
+
+def test_admin_update_writes_the_audit_log_in_the_same_step(store):
+    store.set_answer("w", "web", PRODUCT, "From the web.", ["https://x.test"], status="pending_review")
+    before, after = store.admin_update_answer("w", "mon", status="active")
+    assert (before["status"], after["status"]) == ("pending_review", "active")
+    assert after["description"] == "From the web." and after["tier"] == "web"
+    _, edited = store.admin_update_answer("w", "ana", description="Relieves pain and fever.")
+    assert (edited["status"], edited["description"]) == ("active", "Relieves pain and fever.")
+    audit = store.list_audit()
+    assert [(a["admin"], a["action"], a["cache_key"]) for a in audit] == [("ana", "update", "w"),
+                                                                           ("mon", "update", "w")]
+    assert audit[1]["before"]["status"] == "pending_review" and audit[1]["after"]["status"] == "active"
+
+
+def test_admin_delete_and_missing_rows(store):
+    store.set_answer("g", "general", PRODUCT, "General.", [])
+    assert store.admin_update_answer("nope", "mon", status="rejected") is None
+    assert store.admin_delete_answer("nope", "mon") is None
+    assert store.admin_delete_answer("g", "mon")["description"] == "General."
+    assert store.read_answer("g") is None
+    (entry,) = store.list_audit()
+    assert (entry["action"], entry["after"], entry["before"]["cache_key"]) == ("delete", None, "g")
+
+
+def test_admin_reads_rejected_and_expired_rows(store, monkeypatch):
+    store.set_answer("r", "web", PRODUCT, "Rejected.", ["https://x.test"], status="rejected")
+    monkeypatch.setattr(config, "WEB_ANSWER_TTL_DAYS", -1)
+    store.set_answer("e", "web", PRODUCT, "Expired.", ["https://x.test"])
+    assert store.get_answer("r") is None and store.get_answer("e") is None
+    assert store.read_answer("r")["status"] == "rejected"
+    assert store.read_answer("e")["description"] == "Expired."
+
+
+def test_admin_update_refuses_unknown_statuses(store):
+    store.set_answer("w", "web", PRODUCT, "From the web.", ["https://x.test"])
+    with pytest.raises(ValueError):
+        store.admin_update_answer("w", "mon", status="verified")
+    assert store.list_audit() == []
+
+
+def test_export_includes_the_audit_log(store, tmp_path):
+    store.set_answer("g", "general", PRODUCT, "General.", [])
+    store.admin_update_answer("g", "mon", status="rejected")
+    store_admin.export(store, tmp_path / "exports")
+    (audit_file,) = (tmp_path / "exports").glob("audit-*.jsonl")
+    rows = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").splitlines()]
+    assert [(r["admin"], r["action"]) for r in rows] == [("mon", "update")]
 
 
 def test_export_and_restore(store, tmp_path):

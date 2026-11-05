@@ -96,6 +96,8 @@ pyttsx3.
 | `WEB_SEARCH_TIMEOUT_S` | `8` | Search timeout; past it the scan gets the general tier |
 | `WEB_DEVICE_PER_DAY` / `WEB_DAILY_BUDGET` | `3` / `20` | Web lookups per phone and for the whole service per UTC day; past them, the general tier (not a 429) |
 | `WEB_MISS_TTL_DAYS` | `7` | A medicine the web tier couldn't answer isn't searched again for this long |
+| `ADMIN_ENABLED` | `off` | `on` turns on the `/admin` routes |
+| `ADMIN_KEYS` | — | One admin key per person, as `name=key,name=key`; the name goes in the audit log |
 | `API_DOCS` | `off` | `on` serves `/docs`, `/redoc` and `/openapi.json`. Leave it off on staging and production. |
 
 ## Run the backend
@@ -108,6 +110,24 @@ uvicorn app.api:app --host 0.0.0.0 --port $PORT  # cloud host
 Interactive API docs are at `/docs` when `API_DOCS=on` (set it in your local
 `.env`). They're off by default, so a deployed service doesn't publish its
 schema.
+
+## Admin routes (M7)
+
+Off unless `ADMIN_ENABLED=on`: every `/admin` path is a 404 until then. Each
+person has their own key in `ADMIN_KEYS` (`name=key,name=key`) and sends it
+as `X-Admin-Key`. App keys never work here.
+
+| Route | Does |
+|---|---|
+| `GET /admin/answers?status=&limit=` | Lists cached answers (any status, expired too) |
+| `GET /admin/answers/{cache_key}` | Reads one answer |
+| `PATCH /admin/answers/{cache_key}` | `{"status": "active" \| "pending_review" \| "rejected", "description": "..."}`: approve, reject or fix the text. The text is gated like a model's: 300 characters at most, no doses. Anything else in the body, `tier` included, is a 422. |
+| `DELETE /admin/answers/{cache_key}` | Removes it; the next scan answers afresh |
+| `GET /admin/audit?limit=` | Every admin write, newest first: who, what, before, after |
+
+Every write and its audit row are saved together. A database outage gives a
+503 with nothing changed. `docs/runbook.md` has the step-by-step for a bad
+answer.
 
 ## Smoke test (after each deploy)
 
