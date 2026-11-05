@@ -5,6 +5,40 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-04 — M5: smoke test and API docs off (backend part)
+
+**Branch:** `backend/m5-smoke-test-docs`, from `main` after PR #42 (M3 and M4).
+
+**Added**
+- `scripts/smoke_test.py --url <base url>`, with the key in `SMOKE_API_KEY`. It runs six checks:
+  - `/health` answers ok
+  - a wrong key gets 401
+  - empty text is a `no_text` rescan
+  - a known Biogesic scan answers `ok` with spoken text
+  - `/docs` and `/openapi.json` are 404
+  - repeated empty scans end in 429 with `Retry-After` and spoken text
+- Each run uses a new random device ID. It prints PASS or FAIL per check and exits 1 on any failure.
+- `API_DOCS` (default `off`): `/docs`, `/redoc` and `/openapi.json` answer 404 unless it's `on` (plan section 7, #12). `DocsGateMiddleware` reads it per request.
+
+**Changed**
+- `/docs` is no longer served by default. For local work, add `API_DOCS=on` to `.env`.
+- The max_tokens 200→1000 trial in `description_agent.py` was dropped (Mon, 2026-11-04). It stays at 200.
+
+**Verified**
+- `pytest`: everything passes. `tests/test_smoke_test.py` runs the script against the real app with the fake LLM. It covers:
+  - all six checks passing
+  - a 429 at the right count
+  - failing when docs are on, the server key is unset, or the model is down
+- Against a local `uvicorn` with real Groq: 6/6 passed (a `general` answer, then 429 after 14 more scans).
+- `ruff` is clean.
+
+**Open items (DevOps)**
+- Railway: pin the Python version, run `kb_build.py` in the build step, health check on `/health`.
+- Run the smoke test after each staging deploy and after promoting to production.
+- Don't set `API_DOCS` on Railway.
+
+---
+
 ## 2026-11-01 — M4: rate limiting and abuse protection
 
 **Branch:** `backend/m3-m4-supabase-ratelimit` (M3 and M4 ship together,

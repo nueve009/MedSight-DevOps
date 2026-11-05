@@ -92,6 +92,7 @@ pyttsx3.
 | `DB_CONNECT_TIMEOUT_S` / `DB_QUERY_TIMEOUT_MS` / `DB_SKIP_AFTER_FAILURE_S` | `2` / `1000` / `60` | Fail-open limits: past them a scan treats the cache as a miss, then skips the database for a while |
 | `MEDSIGHT_DATA_DIR` / `MEDSIGHT_LOGS_DIR` | `data/` / `logs/` | Point at a persistent disk on the cloud host |
 | `LOG_LEVEL` | `INFO` | Level for the JSON logs on stdout |
+| `API_DOCS` | `off` | `on` serves `/docs`, `/redoc` and `/openapi.json`. Leave it off on staging and production. |
 
 ## Run the backend
 
@@ -100,7 +101,23 @@ uvicorn app.api:app --reload                     # local
 uvicorn app.api:app --host 0.0.0.0 --port $PORT  # cloud host
 ```
 
-Interactive API docs are served at `/docs`.
+Interactive API docs are at `/docs` when `API_DOCS=on` (set it in your local
+`.env`). They're off by default, so a deployed service doesn't publish its
+schema.
+
+## Smoke test (after each deploy)
+
+```powershell
+$env:SMOKE_API_KEY = "<an app key for that environment>"
+python -m scripts.smoke_test --url https://<service host>
+```
+
+It checks `/health`, a wrong key (401), empty text (a `no_text` rescan), a
+known Biogesic scan, that `/docs` and `/openapi.json` are 404, and that
+repeated scans end in a 429. It prints PASS or FAIL per check and exits 1 if
+any fail. Only the known scan can call the model (at most twice, then it's
+cached). The rate-limit check uses up the caller's address limit for the rest
+of the minute, so wait a minute between runs.
 
 ## API contract v2 (for the mobile team)
 

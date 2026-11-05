@@ -267,7 +267,10 @@ Goal: staging and production services the app can use.
 - [ ] (DevOps) Two Railway environments, `staging` and `production`, each with its own keys and its own Supabase project.
 - [ ] Pinned Python version, `kb_build.py` in the build step (a bad dataset fails the deploy), health check on `/health`.
 - [ ] (DevOps) Deploy to staging on merge to `main`; promote to production by hand after the smoke test passes.
-- [ ] `scripts/smoke_test.py`: health, a known scan, wrong key, empty text, rate limit.
+- [x] `scripts/smoke_test.py`: health, a known scan, wrong key, empty text, rate limit (plus `/docs` off).
+- [x] `/docs` and `/openapi.json` off unless `API_DOCS=on` (section 7, #12).
+
+**Status:** the backend items are on branch `backend/m5-smoke-test-docs` (2026-11-04). The Python version pin, the build step and the health check are Railway settings, so they're with DevOps.
 
 Done when: the app's development build completes scans against staging, and a production deploy plus rollback has been rehearsed once.
 
@@ -380,7 +383,7 @@ Every change reaches production the same way: a reviewed PR, green CI, automatic
 **Release steps:**
 
 1. Merge to `main`: Railway builds, runs `kb_build.py`, applies migrations and deploys to staging.
-2. `scripts/smoke_test.py --env staging` passes.
+2. `scripts/smoke_test.py --url <staging URL>` passes.
 3. Before a release that changes parsing, matching or speech: `eval_kb.py` passes the gate in section 8.
 4. Promote the same build to production in Railway; run the smoke test against production.
 5. Add a dated `CHANGES.md` entry.

@@ -92,6 +92,9 @@ MEDSIGHT_API_KEY = os.environ.get("MEDSIGHT_API_KEY", "")
 # More keys, as "name=key,name=key" (one per app release or tester group), so a
 # key can be retired or cut off on its own. Names show up in logs, keys never.
 MEDSIGHT_API_KEYS = os.environ.get("MEDSIGHT_API_KEYS", "")
+# /docs, /redoc and /openapi.json: off unless API_DOCS=on, so a deployed
+# service doesn't publish its schema (plan section 7, #12). Turn on locally.
+API_DOCS = os.environ.get("API_DOCS", "off").strip().lower() in ("1", "on", "true", "yes")
 MAX_BODY_BYTES = 64 * 1024     # whole request body; larger gets 413
 MAX_OCR_TEXT_CHARS = 5000      # request validation; longer gets 422
 MAX_BLOCKS = 500               # text blocks per request; more gets 422
