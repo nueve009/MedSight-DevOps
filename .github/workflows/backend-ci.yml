@@ -24,6 +24,22 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A throwaway Postgres for tests/test_store.py. Those tests drop and
+    # re-create their tables, so never point this at a real database.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MEDSIGHT_TEST_DATABASE_URL: postgresql://postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -49,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0   # scan the full history, not only the last commit
+          fetch-depth: 0 # scan the full history, not only the last commit
       - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
