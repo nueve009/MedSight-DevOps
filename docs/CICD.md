@@ -200,11 +200,9 @@ The sample is small (5 runs in 6 days), so these numbers show how the pipeline b
 ## Not done yet
 
 - A production build job that needs the reviewer's approval (`production` environment)
-- Making the `backend` and `secret-scan` checks required in the branch ruleset
 - A Dependabot `pip` entry for `/backend` (asked for in `backend/ops/README.md`)
 - A first frontend test, which is the app team's decision
 - Setting up Railway (backend hosting) and finishing the Supabase staging project
-- Automatic code review (CodeRabbit)
 
 ## Security review log
 
