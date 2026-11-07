@@ -71,3 +71,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Repos owned by a GitHub organization also need GITLEAKS_LICENSE
           # (free key from gitleaks.io). Personal-account repos don't.
+
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the backend image
+        run: docker build -t medsight-backend .
