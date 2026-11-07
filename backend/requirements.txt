@@ -5,5 +5,5 @@ fastapi==0.162.0
 uvicorn==0.54.0
 python-dotenv==1.2.4
 requests==2.34.2       # Groq / Ollama HTTP client (llm_client.py)
-psycopg[binary]==3.3.6 # Supabase Postgres (app/store/postgres.py)
+psycopg[binary]==3.3.8 # Supabase Postgres (app/store/postgres.py)
 psycopg-pool==3.3.3
