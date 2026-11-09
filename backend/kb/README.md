@@ -8,6 +8,13 @@ teammate** before it counts.
 
 | File | One row per | Holds |
 |---|---|---|
+**Where it lives (2026-11-09): Supabase.** The rows are kept in the
+`kb_products`, `kb_ingredients` and `kb_passages` tables, and the backend
+reads them from there. A row counts only once a second teammate **approves
+it in Supabase** (see "Approving rows in Supabase" below). The CSV files here
+have the same columns and are used to import drafts and to keep a reviewed
+copy in git.
+
 | `products.csv` | product: one brand, strength(s) and dosage form | brand, every ingredient and strength, OTC/Rx, FDA registration, the **spoken description** |
 | `ingredients.csv` | active ingredient | other names for it (synonyms) and, optionally, a spoken description of what it's for |
 | `passages.csv` | piece of source text | the exact "Indications" (or warning) text the descriptions are based on, with its page URL |
@@ -47,20 +54,57 @@ up by hand; never scrape or automate it.**
    what the source says, in everyday words, with no doses. Pay most
    attention to flagged rows. Write the final sentence in
    `approved_description` and your name in `checked_by`.
-6. **Fill the three CSVs here** with the checked values (columns below).
-7. **Second-person check** of every row against the page and the portal
-   screenshot. Only then does the checker put their name in `checked_by`.
-8. **Validate and build:**
+6. **Put the rows in Supabase**, one batch at a time (for example the pain
+   and fever medicines first). Either type them into the Table Editor
+   (ingredients first, then products, then passages), or fill a draft
+   folder with the three CSVs and import it:
    ```powershell
-   python -m scripts.kb_build --check                      # validate kb/
-   python -m scripts.kb_build --check --kb-dir <folder>    # validate a draft folder first
-   python -m scripts.kb_build                              # validate + build data/kb.sqlite
+   python -m scripts.kb_build --check --kb-dir kb/staging/batch1   # optional: see every problem first
+   $env:KB_ADMIN_DATABASE_URL = "<owner connection string>"        # never commit it
+   python -m scripts.kb_build --push --kb-dir kb/staging/batch1
    ```
-   It lists every problem with its file and line. Fix them until it says the
-   folder is valid. The backend loads `data/kb.sqlite` at startup.
-9. **Evaluate** before every release (see "Test scans" below).
-10. **Open a PR** for the `kb/` changes, reviewed by a second teammate, and
-    list the pages checked.
+   `--push` adds new rows and updates changed ones by their ID. It never
+   approves anything, and leave `checked_by` empty: the checker fills it.
+   An approved row that the import changes goes back to unapproved; rows
+   that didn't change stay approved. Rows that are only in Supabase are
+   kept (it lists them).
+7. **Second-person check and approval in Supabase.** See below. The backend
+   picks up approved rows within a minute (`KB_REFRESH_S`), no redeploy.
+8. **Evaluate** before every release (see "Test scans" below):
+   `python -m scripts.kb_build --pull` builds `data/kb.sqlite` from the
+   approved rows, then run `eval_kb`.
+9. **Keep a copy in git:** `python -m scripts.kb_build --pull --csv-out kb`
+   writes the approved rows into the CSVs here; open a PR with them.
+
+## Approving rows in Supabase
+
+In the Supabase dashboard, open **Table Editor**, then `kb_ingredients`,
+`kb_products` or `kb_passages`.
+
+1. Check the row against the TheFilipinoDoctor page, the box photo and the
+   FDA portal screenshot (and, for a product, the spoken description against
+   the source text).
+2. Type **your name** in `checked_by` (for a product, also in
+   `description_checked_by`) and save.
+3. Set `approved` to **true** and save. That's the approval.
+
+The database refuses the approval, with the reason, when:
+- `checked_by` is empty or the same name as `entered_by`
+- the row was edited in the same save (save the edit first; the approval is
+  its own step)
+- the row breaks a rule: a spoken description over 300 characters or with a
+  dose or schedule, a count of strengths that doesn't match the ingredients,
+  no classification, an expired registration, an ingredient that isn't in
+  `kb_ingredients`, a `tfd` passage without its page URL, ...
+
+**Changing an approved row un-approves it** and clears `checked_by`, so every
+edit is checked again. `review_note` is for the checker's comments and can
+be changed without un-approving. A product is spoken as reviewed only when
+the product, every one of its ingredients and at least one `indications`
+passage are approved. Every change is kept in `kb_review_log`.
+
+Supabase can't tell which teammate clicked (the Table Editor works as the
+database owner), so `checked_by` is the name you type: only type your own.
 
 ## `products.csv`
 
@@ -146,7 +190,7 @@ line:
 Run them (this calls the real LLM, so use a key or local Ollama):
 
 ```powershell
-python -m scripts.kb_build
+python -m scripts.kb_build --pull     # data/kb.sqlite from the approved rows in Supabase
 python -m scripts.eval_kb --out eval_report.json
 ```
 

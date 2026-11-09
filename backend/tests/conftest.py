@@ -66,6 +66,7 @@ def default_settings(monkeypatch):
     monkeypatch.setattr(config, "MAX_PARSE_CHARS", 2000)
     monkeypatch.setattr(config, "WEB_SEARCH_PROVIDER", "")
     monkeypatch.setattr(config, "TAVILY_API_KEY", "")
+    monkeypatch.setattr(config, "KB_BACKEND", "sqlite")
 
 
 @pytest.fixture

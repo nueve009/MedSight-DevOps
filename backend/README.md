@@ -291,18 +291,25 @@ Response (200):
   although the spoken text now says "reviewed").
 
 `GET /health` returns `{"status": "ok", "llm_provider": "...", "kb_version": "...", "kb_products": 29}`.
-`kb_version` is `null` and `kb_products` 0 when `data/kb.sqlite` hasn't been
-built: the service still runs, but every answer falls to the lower tiers.
+`kb_version` is `null` and `kb_products` 0 when no reviewed dataset is loaded
+(no approved rows in Supabase, Supabase unreachable since startup, or no
+`data/kb.sqlite` locally): the service still runs, but every answer falls to
+the lower tiers.
 
 ## Reviewed dataset
 
-`kb/` holds the team-reviewed medicines (`kb/README.md` has the workflow and
-columns). `python -m scripts.kb_build` validates it and builds
-`data/kb.sqlite`, which the backend loads at startup; the build is refused
-if any row breaks a rule. Tools for the team:
+The team-reviewed medicines live in Supabase (`kb_*` tables, migration
+0005). Each row counts only after a second teammate approves it in the
+Table Editor; the deployed backend reads approved rows and re-reads them
+every minute. `kb/README.md` has the workflow and columns. Locally,
+`python -m scripts.kb_build` builds `data/kb.sqlite` from the CSVs in `kb/`,
+or `--pull` builds it from Supabase; either is refused if a row breaks a
+rule. Tools for the team:
 
 ```bash
 python -m scripts.kb_build --check [--kb-dir <folder>]   # validate
+python -m scripts.kb_build --push --kb-dir <folder>      # import drafts into Supabase, unapproved
+python -m scripts.kb_build --pull [--csv-out kb]         # approved rows -> data/kb.sqlite (and CSVs)
 python -m scripts.kb_draft_descriptions                  # LLM drafts of spoken descriptions → kb/staging/
 python -m scripts.eval_kb --out report.json              # labeled scans: must give 0 wrong reviewed answers
 ```

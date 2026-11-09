@@ -24,8 +24,9 @@ runbook only covers using them.
 
 ## 1. Deploy and roll back
 
-**Deploy:** merge the PR into `main`. Railway builds it, runs `kb_build.py`
-and the migrations, and deploys to staging. Then:
+**Deploy:** merge the PR into `main`. Railway builds it and deploys to
+staging. Migrations are applied by hand (`migrations/README.md`); the
+reviewed dataset comes from Supabase, not from the build. Then:
 
 1. Run the smoke test against staging:
    ```powershell
@@ -118,13 +119,13 @@ The audit export is kept as a record. It isn't loaded back. Rate counters and th
 
 ## 6. Add a medicine to the reviewed list
 
-Only through a PR, never through admin routes. See `kb/README.md` for the full steps.
+In Supabase, never through admin routes. See `kb/README.md` for the full steps.
 
-1. Enter the rows from the box photos, the TheFilipinoDoctor page and the FDA portal (looked up by hand, never scraped).
-2. A second person checks every value and signs `checked_by`.
-3. `python -m scripts.kb_build --check` must pass.
-4. `python -m scripts.eval_kb` must pass.
-5. Open the PR. It needs the second reviewer. After the deploy, the next scan answers as reviewed.
+1. Enter the rows from the box photos, the TheFilipinoDoctor page and the FDA portal (looked up by hand, never scraped): in the Table Editor, or `python -m scripts.kb_build --push --kb-dir <draft folder>`.
+2. A second person checks every value, types their name in `checked_by` and sets `approved` to true.
+3. Within a minute `/health` shows the new `kb_version` and `kb_products`.
+4. `python -m scripts.kb_build --pull`, then `python -m scripts.eval_kb` must pass.
+5. To take a row off the air at once, set its `approved` to false.
 
 ## 7. A provider is down
 

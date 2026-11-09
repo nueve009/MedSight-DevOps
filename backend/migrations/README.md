@@ -11,6 +11,7 @@ change is a new, higher-numbered file.
 | `0002_backend_role_grants.sql` | grants and RLS policies for the `medsight_backend` role only |
 | `0003_rate_limits.sql` | `rate_limits` counters (hashed buckets), same grants and RLS |
 | `0004_audit_log.sql` | `audit_log` of admin writes; the backend role can only read and add rows |
+| `0005_kb_dataset.sql` | the reviewed dataset (`kb_ingredients`, `kb_products`, `kb_passages`), approved row by row in the Table Editor; `kb_review_log`. The backend role can read approved rows only |
 
 ## First setup (once per Supabase project: staging and production)
 
@@ -32,6 +33,9 @@ change is a new, higher-numbered file.
    - `DATABASE_URL=postgresql://medsight_backend.<project-ref>:<password>@<pooler host>:5432/postgres`
      (the session pooler; the direct connection works too)
    - `DATABASE_SSLMODE=require` (the default)
+   - `KB_BACKEND=postgres` is the default when `CACHE_BACKEND=postgres`: the
+     reviewed dataset is read from the approved `kb_*` rows with the same
+     `DATABASE_URL`, and re-read every `KB_REFRESH_S` (60) seconds.
 
 The app's public Supabase keys (`anon`, `authenticated`) can't read or write
 these tables: RLS is on, and the only policies are for `medsight_backend`.
