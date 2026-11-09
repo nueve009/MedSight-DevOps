@@ -76,7 +76,11 @@ def dataset_version(data: dict) -> Optional[str]:
 def servable_from_postgres(conninfo: str) -> tuple[dict, Optional[str], list[str]]:
     """(rows to serve, their version, the errors that dropped approved rows)."""
     raw = fetch_approved(conninfo)
-    data, dropped = servable(raw["products"], raw["ingredients"], raw["passages"])
+    # An approved passage whose product is waiting for (re-)approval is expected
+    # after an edit, not a broken row: skip it without reporting it.
+    approved_products = {row["product_id"] for _, row in raw["products"]}
+    passages = [(where, row) for where, row in raw["passages"] if row["product_id"] in approved_products]
+    data, dropped = servable(raw["products"], raw["ingredients"], passages)
     return data, dataset_version(data), dropped
 
 

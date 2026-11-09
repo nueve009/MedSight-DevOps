@@ -82,6 +82,17 @@ def test_push_drafts_need_who_entered_every_ingredient(tmp_path):
     assert any("'entered_by' is empty; Supabase needs" in e for e in v.errors)
 
 
+def test_a_passage_of_an_unapproved_product_is_skipped_quietly(monkeypatch):
+    rows = review_rows()
+    rows["products"] = [p for p in rows["products"] if p["product_id"] != "biogesic-500-tab"]   # edited, unapproved
+    products, ingredients, passages = table_rows(rows)
+    monkeypatch.setattr(kb_source, "fetch_approved", lambda conninfo: {
+        "products": products, "ingredients": ingredients, "passages": passages})
+    data, version, dropped = kb_source.servable_from_postgres("postgresql://unused")
+    assert dropped == [] and len(data["products"]) == 6 and version
+    assert "biogesic-500-tab-ind-1" not in {p["passage_id"] for p in data["passages"]}
+
+
 # --- the refresher (no database) ---
 
 def kb_with_version(version):
