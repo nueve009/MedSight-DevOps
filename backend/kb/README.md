@@ -45,6 +45,18 @@ on the portal before approving.
    **from the portal, not the website**) and `portal_checked_on`. If it isn't
    found, it's for a different product, or it's registered as a food
    supplement or herbal, drop the product.
+
+   **FDA lookup script:** `python -m scripts.fda_lookup` (or `--brands
+   "Biogesic,Tempra"`) searches the portal for the brands in
+   `staging/brands.txt` and `staging/tfd_products_draft.csv`, one request
+   every 5 seconds at most. It writes `staging/fda_lookup_draft.csv` (every
+   registration the portal returned for each brand), `staging/fda_not_found.txt`
+   and a cache in `staging/fda_cache/`, so a brand is only asked once
+   (`--refresh` asks again). It never picks a registration and never touches
+   `kb/*.csv` or Supabase. The reviewer still chooses the right row by box
+   number, confirms each value on the portal and takes the screenshot. If it
+   stops on a refusal, a login or a CAPTCHA, don't work around it: tell the
+   team.
 4. **Draft the spoken descriptions:**
    ```powershell
    python -m scripts.kb_draft_descriptions

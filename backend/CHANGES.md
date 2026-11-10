@@ -17,7 +17,17 @@ before approving. Checked first: robots.txt allows every path and no terms of
 use were found. Updated `CLAUDE.md`, `kb/README.md`, `.agents/AGENTS.md` and
 `docs/runbook.md`. The comment in the applied `migrations/0005_kb_dataset.sql`
 still says "never scraped"; it is left as is because applied migrations are
-never edited. The script itself is not built yet.
+never edited.
+
+Built the same day: `scripts/fda_lookup.py` (tests in
+`tests/test_fda_lookup.py`). It calls the portal's own search,
+`GET /api/search?q=<brand>`, and reads the Drug CPR results (`cdrr`). It looks
+up only the team's list (`staging/brands.txt` plus `tfd_products_draft.csv`),
+waits at least 5 s between requests, caches each reply in `staging/fda_cache/`
+and stops on HTTP 401, 403, 419 or 429, a redirect, or anything that isn't the
+expected JSON. It writes every registration for a brand to
+`staging/fda_lookup_draft.csv` without picking one; the reviewer picks by the
+number on the box and confirms it on the portal.
 
 ## 2026-11-09 — Reviewed dataset in Supabase, approved row by row
 
