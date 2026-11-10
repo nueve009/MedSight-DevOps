@@ -12,6 +12,7 @@ change is a new, higher-numbered file.
 | `0003_rate_limits.sql` | `rate_limits` counters (hashed buckets), same grants and RLS |
 | `0004_audit_log.sql` | `audit_log` of admin writes; the backend role can only read and add rows |
 | `0005_kb_dataset.sql` | the reviewed dataset (`kb_ingredients`, `kb_products`, `kb_passages`), approved row by row in the Table Editor; `kb_review_log`. The backend role can read approved rows only |
+| `0006_review_console.sql` | **Not yet run.** The review console: `reviewers`, `kb_reviews` (append-only), `kb_evidence`, `kb_fda_lookups`, `kb_settings`, `review_state` and `last_edited_by` on the `kb_*` tables, and the `medsight_review` role. Setup is in `kb/README.md`, "Reviewing in the console" |
 
 ## First setup (once per Supabase project: staging and production)
 
