@@ -6,9 +6,11 @@ the phone's text-to-speech.
 
 Answer order (development plan, section 5):
     name and strength
-    -> "This is a prescription medicine." when it applies
+    -> "This is a prescription medicine." for a reviewed product marked Rx
     -> the tier line: reviewed, or the warning for the ingredient, web and
        general tiers (always BEFORE the description: a listener may stop early)
+    -> for a web answer whose page says prescription: "According to <site>,
+       this is a prescription medicine." (after the warning: it isn't reviewed)
     -> the description
     -> the reading caveat, when OCR confidence was low
     -> the pharmacist advice
@@ -106,7 +108,7 @@ def name_line(product: ParsedProduct) -> str:
 def answer(product: ParsedProduct, tier: str, description: str, rx: bool = False,
            caveat: bool = False, source_site: Optional[str] = None) -> str:
     parts = [name_line(product)]
-    if rx:
+    if rx and tier != WEB:
         parts.append(RX_LINE)
     description = _sentence(description)
     if tier == REVIEWED:
@@ -114,8 +116,10 @@ def answer(product: ParsedProduct, tier: str, description: str, rx: bool = False
     elif tier == INGREDIENT:
         parts.append(f"{INGREDIENT_INTRO} {_lower_first(description)}")
     elif tier == WEB:
-        parts += [WEB_WARNING, f"According to {source_site}, {_lower_first(description)}" if source_site
-                  else description]
+        parts.append(WEB_WARNING)
+        if rx:
+            parts.append(f"According to {source_site}, this is a prescription medicine." if source_site else RX_LINE)
+        parts.append(f"According to {source_site}, {_lower_first(description)}" if source_site else description)
     else:
         parts += [GENERAL_WARNING, description]
     if caveat:

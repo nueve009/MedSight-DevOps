@@ -139,7 +139,8 @@ def _web(product, key: str, cache: Store, record: dict, budget: Callable[[], Non
     if found is None:
         _cache_call("set_web_miss", cache.set_parse, web_search.miss_key(key), web_search.miss_marker(time.time()))
     else:
-        _cache_call("set_answer", cache.set_answer, key, speech.WEB, product.to_dict(), found.description,
+        stored = {**product.to_dict(), "rx": True} if found.rx else product.to_dict()
+        _cache_call("set_answer", cache.set_answer, key, speech.WEB, stored, found.description,
                     [found.source_url], "pending_review")
     return found
 
@@ -165,10 +166,13 @@ def _answer(decision: Decision, match: Match, cache: Store, record: dict, budget
     cached = _cache_call("get_answer", cache.get_answer, key)
     found = None if cached and cached["tier"] == speech.WEB else _web(product, key, cache, record, budget,
                                                                       web_budget)
+    rx = False   # only ever true here when an allow-listed page said so
     if found:
         tier, description, sources, cache_status = speech.WEB, found.description, [found.source_url], "miss"
+        rx = found.rx
     elif cached:
         tier, description, sources, cache_status = cached["tier"], cached["description"], cached["sources"], "hit"
+        rx = tier == speech.WEB and (cached.get("product") or {}).get("rx") is True
     else:
         budget()
         started = time.perf_counter()
@@ -180,8 +184,8 @@ def _answer(decision: Decision, match: Match, cache: Store, record: dict, budget
             _cache_call("set_answer", cache.set_answer, key, tier, product.to_dict(), description, sources)
 
     site = web_search.site_name(sources[0]) if tier == speech.WEB and sources else None
-    spoken = speech.answer(product, tier, description, caveat=caveat, source_site=site)
-    return _response(decision, spoken, tier=tier, product=_product_json(product),
+    spoken = speech.answer(product, tier, description, rx=rx, caveat=caveat, source_site=site)
+    return _response(decision, spoken, tier=tier, product=_product_json(product, rx),
                      description=description, sources=sources, cache=cache_status)
 
 

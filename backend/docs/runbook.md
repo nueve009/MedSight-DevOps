@@ -84,7 +84,7 @@ Web answers are spoken right away, after the web warning, and wait for review as
    ```powershell
    curl.exe -H "X-Admin-Key: <admin key>" "<url>/admin/answers?status=pending_review"
    ```
-2. Open each source URL. Check that the page supports every claim in the description, and that nothing in it says how much to take.
+2. Open each source URL. Check that the page supports every claim in the description, and that nothing in it says how much to take. If `product.rx` is `true`, the app is telling users the page says this is a prescription medicine, so check that the page really says that for this strength and form.
 3. Mark each one approved (`{"status": "active"}`) or rejected (`{"status": "rejected"}`), using the same PATCH as above. An approved web answer is still spoken with the web warning.
 
 Web answers expire after 30 days either way.

@@ -73,6 +73,9 @@ def test_general_answer():
 
 
 def test_warning_always_comes_before_the_description():
+    spoken = speech.answer(BIOGESIC, speech.WEB, "UNIQUE-DESCRIPTION", rx=True, source_site="Hello Doctor")
+    rx_sentence = "According to Hello Doctor, this is a prescription medicine."
+    assert spoken.index(speech.WEB_WARNING) < spoken.index(rx_sentence)
     for tier in (speech.INGREDIENT, speech.WEB, speech.GENERAL):
         spoken = speech.answer(BIOGESIC, tier, "UNIQUE-DESCRIPTION")
         assert spoken.index("reviewed") < spoken.lower().index("unique-description")

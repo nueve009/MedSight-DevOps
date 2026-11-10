@@ -5,6 +5,22 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-10 - Web answers say "prescription" when the page does
+
+**Asked by Mon:** a prescription medicine outside the reviewed list should
+still be stated as one if the search results say so. A web answer now adds
+"According to <site>, this is a prescription medicine." after the web warning,
+and `product.prescription` is true. Both the model and the chosen page's own
+wording must agree (`web_search.page_states_rx`); a page that also says
+non-prescription or OTC doesn't count. Stored as `rx` in the answer's
+`product` JSON, so no migration, and web answers cached before this keep no
+prescription line until they expire. The ingredient and general tiers are
+unchanged: nothing there comes from a source that states it. The sentence is
+new spoken wording, so it still needs the team's approval and a listen on the
+phone's text-to-speech (`speech.py`).
+
+---
+
 ## 2026-11-10 - FDA portal lookups may be scripted (docs only)
 
 **Decided by Mon.** The old rule "the FDA portal must not be scraped or

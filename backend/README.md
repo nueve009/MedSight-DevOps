@@ -229,8 +229,12 @@ Response (200):
   For `reviewed` answers, `product` holds the dataset's spelling (not the
   OCR's), `sources` the source page URLs, and `product.prescription` is true
   for prescription products, which are also spoken with "This is a
-  prescription medicine." `cache` is `null` for `reviewed` and `ingredient`
-  answers (they come from the dataset, not the cache).
+  prescription medicine." For a `web` answer, `product.prescription` is true
+  only when the source page says so; it is spoken after the web warning as
+  "According to <site>, this is a prescription medicine." It is always false
+  for `ingredient` and `general`, which means "not stated", not "doesn't need
+  a prescription". `cache` is `null` for `reviewed` and `ingredient` answers
+  (they come from the dataset, not the cache).
 
 Other responses (both versions):
 - **401:** missing or wrong API key.

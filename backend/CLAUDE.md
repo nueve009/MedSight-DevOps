@@ -146,6 +146,10 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    - Found: cached as `web` / `pending_review` (30-day expiry) and spoken as
      "According to <site>, ...". Not found or a failed gate: a "not found" marker,
      then the general tier. A search outage caches nothing.
+   - Prescription (2026-11-10): `WebAnswer.rx` needs the model's `prescription: true`
+     **and** the chosen page's own wording (`page_states_rx`). It is stored as
+     `rx` in the answer's `product` JSON and spoken after the web warning,
+     attributed to the site. The ingredient and general tiers never say it.
    - The server never fetches pages itself: the text comes from the provider.
    - `tests/conftest.py` replaces `web_search.search` with `FakeSearch`.
 6. **Describe** (`description_agent.get_description`, the `general` tier),
