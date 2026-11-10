@@ -11,6 +11,7 @@ Endpoints:
     POST /v2/identify  contract v2 (README.md): every product, scan rules, tiers
     POST /identify     contract v1, kept until every active app build uses v2
     /admin/...         answer cache review and fixes (admin.py), off unless ADMIN_ENABLED
+    /admin/kb/...      the review console for the reviewed dataset (review.py), same switch
 
 Before any model call, each identify request passes the API key check and
 the rate limits (ratelimit.py): 429 with spoken text and Retry-After when a
@@ -26,10 +27,11 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app import admin, config, speech
+from app import admin, config, review, speech
 from app.kb_source import KBRefresher, kb_conninfo, load_from_postgres
 from app.llm_client import LLMUnavailableError
 from app.logging_setup import RequestIdMiddleware, configure_logging, request_id_var
@@ -93,7 +95,10 @@ class BodySizeLimitMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        limit = config.MAX_BODY_BYTES
+        path = scope.get("path", "")
+        # Evidence photos are the one larger upload, and those routes need a signed-in reviewer.
+        limit = (config.MAX_EVIDENCE_BODY_BYTES if path.startswith("/admin/kb/") and path.endswith("/evidence")
+                 else config.MAX_BODY_BYTES)
         for name, value in scope.get("headers", []):
             if name == b"content-length" and value.isdigit() and int(value) > limit:
                 await JSONResponse({"detail": "Request body too large."}, status_code=413)(scope, receive, send)
@@ -138,8 +143,13 @@ class RouteGateMiddleware:
 app = FastAPI(title="MedSight backend", lifespan=lifespan)
 app.add_middleware(RouteGateMiddleware)
 app.add_middleware(BodySizeLimitMiddleware)
+if config.REVIEW_ALLOWED_ORIGINS:   # the hosted review page; the app and the local console never need this
+    app.add_middleware(CORSMiddleware, allow_origins=config.REVIEW_ALLOWED_ORIGINS,
+                       allow_methods=["GET", "POST", "PATCH", "DELETE"],
+                       allow_headers=["Authorization", "Content-Type"])
 app.add_middleware(RequestIdMiddleware)   # added last = outermost, so even a 413 gets an ID
 app.include_router(admin.router)
+app.include_router(review.router)
 
 
 def _api_keys() -> dict[str, str]:

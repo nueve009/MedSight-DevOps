@@ -7,3 +7,5 @@ python-dotenv==1.2.4
 requests==2.34.2       # Groq / Ollama HTTP client (llm_client.py)
 psycopg[binary]==3.3.8 # Supabase Postgres (app/store/postgres.py)
 psycopg-pool==3.3.3
+PyJWT[crypto]==2.15.1  # review console: checks Supabase sign-in tokens (app/review_auth.py)
+python-multipart==0.0.33  # review console: evidence uploads
