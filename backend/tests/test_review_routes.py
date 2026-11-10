@@ -44,8 +44,8 @@ def passage_row() -> dict:
 def candidate(**changes) -> dict:
     return {"id": 1, "brand_query": "Testflu", "brand_name": "Testflu", "generic_name": "Fakeamol",
             "strength": "500 mg", "dosage_form": "Tablet", "fda_reg_no": "DR-XY99999", "reg_expiry": FUTURE,
-            "classification": "OTC", "classification_raw": "OTC", "manufacturer": "Portal Co", "portal_checked_on": "2026-11-10", "note": "",
-            "export_only": False, **changes}
+            "classification": "OTC", "classification_raw": "OTC", "manufacturer": "Portal Co",
+            "portal_checked_on": "2026-11-10", "note": "", "export_only": False, **changes}
 
 
 class FakeStore:
