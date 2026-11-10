@@ -5,6 +5,32 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-10 - Import staging drafts as pending rows
+
+**Asked by Mon:** move the drafts in `kb/staging/` into Supabase for review in
+the console. `scripts/kb_import_staging.py --by NAME` maps them and writes
+`kb/staging/import/*.csv`. `--push` adds them as pending rows.
+
+**Decisions**
+- `validate_rows(unfinished=True)` lets a draft leave its FDA values, spoken
+  description and PNF answer empty. Nothing else about the rules changed.
+- `kb_build.push(drafts=True)` skips rows that were approved, sent back or
+  edited in the console, and doesn't write the columns reviewers fill in. A plain
+  `push` would un-approve changed rows and blank FDA values already picked.
+- `pnf_listed` isn't in the drafts and the column can't hold "unknown", so new
+  ingredients get its default, `no`.
+- An ingredient drawn from two pages keeps one `source_url`, because the API
+  returns the value as it is. The summary lists the other link.
+
+**Checked:** tests, including the real SQL on a throwaway local Postgres 18, and
+a run without `--push` on the real staging files.
+
+**Not checked:** `--push` against Supabase, which Mon runs. An edit made in the
+Table Editor records no editor, so a later import can still update that row's
+draft text (never its FDA values).
+
+---
+
 ## 2026-11-10 - Review console: tokens signed with published keys
 
 **Bug found on the first real sign-in.** The project signs sessions with ES256,

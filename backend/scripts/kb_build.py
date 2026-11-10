@@ -59,6 +59,9 @@ TABLES = (("ingredients", "kb_ingredients", INGREDIENT_FIELDS, "generic_name"),
           ("passages", "kb_passages", PASSAGE_FIELDS, "passage_id"))
 # Columns where an empty CSV value is NULL in Postgres (dates, and the unique registration number).
 NULL_WHEN_EMPTY = {"reg_expiry", "portal_checked_on", "fda_reg_no"}
+# Filled in during review, never by an import of staging drafts (see push()).
+REVIEWER_FILLED_FIELDS = {"classification", "fda_reg_no", "reg_expiry", "manufacturer", "portal_checked_on",
+                          "pnf_listed", "pnf_forms", "pnf_page"}
 
 
 def kb_version(kb_dir: Path = config.KB_DIR) -> str:
@@ -163,13 +166,18 @@ def admin_conninfo() -> str:
     return os.environ.get("KB_ADMIN_DATABASE_URL") or os.environ.get("MIGRATION_DATABASE_URL", "")
 
 
-def push(data: dict, conninfo: str) -> dict:
+def push(data: dict, conninfo: str, drafts: bool = False) -> dict:
     """Add or update rows in Supabase by their key, in one transaction.
 
     Rows always arrive unapproved: the checker's columns are never written, and
     the database un-approves an approved row whose values change. Unchanged
     rows are left alone (they stay approved). Rows that are only in Supabase
     are kept. Returns {table: {"added": n, "updated": n, "unchanged": n, "only_in_db": [keys]}}.
+
+    drafts: staging drafts going in for review (scripts/kb_import_staging.py).
+    Rows a person has already handled (approved, sent back, or edited in the
+    console) are not touched, and the columns reviewers fill in are not written,
+    so importing again can't undo review work. Adds "protected": n to the counts.
     """
     import psycopg
 
@@ -177,15 +185,24 @@ def push(data: dict, conninfo: str) -> dict:
     with psycopg.connect(conninfo, sslmode=config.DATABASE_SSLMODE, connect_timeout=10,
                          prepare_threshold=None) as conn, conn.transaction():
         for name, table, fields, key in TABLES:
-            cols = [f for f in fields if f not in CHECKER_FIELDS]
+            cols = [f for f in fields if f not in CHECKER_FIELDS and not (drafts and f in REVIEWER_FILLED_FIELDS)]
             others = [c for c in cols if c != key]
+            protected: set[str] = set()
+            if drafts:  # locked, so a row can't be approved between this check and its update
+                protected = {r[0] for r in conn.execute(
+                    f"SELECT {key} FROM {table} "
+                    "WHERE approved OR review_state <> 'pending' OR last_edited_by <> '' FOR UPDATE")}
             sql = (f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
                    f"ON CONFLICT ({key}) DO UPDATE SET {', '.join(f'{c} = EXCLUDED.{c}' for c in others)} "
                    f"WHERE ({', '.join(f'{table}.{c}' for c in others)}) IS DISTINCT FROM "
                    f"({', '.join(f'EXCLUDED.{c}' for c in others)}) "
                    "RETURNING (xmax = 0) AS added")
             counts = {"added": 0, "updated": 0, "unchanged": 0}
+            if drafts:
+                counts["protected"] = sum(row[key] in protected for row in data[name])
             for row in data[name]:
+                if row[key] in protected:
+                    continue
                 cur = conn.execute(sql, [None if c in NULL_WHEN_EMPTY and not row[c] else row[c] for c in cols])
                 result = cur.fetchone()
                 counts["unchanged" if result is None else "added" if result[0] else "updated"] += 1

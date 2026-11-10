@@ -37,6 +37,7 @@ python -m scripts.store_admin export --out <dir> | restore <file> | purge   # ni
 python -m scripts.smoke_test --url <base url>              # after a deploy; key in SMOKE_API_KEY
 python -m scripts.fda_lookup [--brands "A,B"] [--refresh]  # FDA drafts -> kb/staging/ (rate-limited, team's list only)
 python -m scripts.fda_lookup --push --by NAME              # drafts -> kb_fda_lookups candidates (owner connection)
+python -m scripts.kb_import_staging --by NAME [--push]     # kb/staging/ drafts -> import/*.csv; --push adds them as pending rows
 python -m scripts.review_console                           # review console at http://127.0.0.1:8100/review/
 ```
 

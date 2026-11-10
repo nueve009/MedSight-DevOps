@@ -91,6 +91,38 @@ on the portal before approving.
 9. **Keep a copy in git:** `python -m scripts.kb_build --pull --csv-out kb`
    writes the approved rows into the CSVs here; open a PR with them.
 
+## From staging to the console
+
+Once `staging/` holds the scraper's drafts and the description sheet, the owner
+connection in `KB_ADMIN_DATABASE_URL` puts them in the review queue:
+
+```powershell
+python -m scripts.fda_lookup --push --by "Ana"          # 1. FDA candidates
+python -m scripts.kb_import_staging --by "Ana"          # 2. write staging/import/*.csv and print a summary; read it
+python -m scripts.kb_import_staging --by "Ana" --push   # 3. add the rows to Supabase as pending
+```
+
+`--by` is recorded as `entered_by`, so that person can't approve those rows.
+Then review them in the console.
+
+- **Left empty for review:** classification, FDA number, expiry, manufacturer
+  and portal date (pick them from the FDA candidates), and the checker's
+  columns. `pnf_listed` isn't in the drafts, and the table's default `no`
+  stands until a reviewer sets it.
+- **Descriptions** come from `descriptions_review.csv`, the `approved_description`
+  if someone wrote one, or else the draft. One with a dose or over 300
+  characters is left empty and listed. The summary also lists the drafts the
+  sheet flagged: check those first.
+- **Skipped and listed:** a product whose ingredient count and strengths
+  disagree, with an ingredient not in the drafts, or with no indications text,
+  and its passages. Two different products with one ID are never merged.
+- **Importing again is safe.** Rows that were approved, sent back or edited in
+  the console are left alone, and the columns reviewers fill in are never
+  written. Only untouched pending rows get the new draft text.
+
+The import doesn't apply the scope rule in step 2 of the workflow: a reviewer
+still rejects injections, inhalation solutions and hospital packs.
+
 ## Reviewing in the console
 
 The console is a web page for checking rows, comparing them with box photos
