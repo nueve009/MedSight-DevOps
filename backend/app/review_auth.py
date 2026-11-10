@@ -3,9 +3,10 @@ Who is calling the review console (app/review.py).
 
 A request needs Authorization: Bearer <Supabase access token>. It is accepted
 only if the signature is valid, it hasn't expired, its audience is
-"authenticated", it isn't an anonymous session, the two-factor code was entered
-(aal2), and the account is active in `reviewers`. The name in that table is the
-actor: a name in a request body is never used.
+"authenticated", it isn't an anonymous session, and the account is active in
+`reviewers`. The name in that table is the actor: a name in a request body is
+never used. With config.REVIEW_REQUIRE_MFA on (the default), the authenticator
+code must have been entered too (aal2); only the local launcher turns it off.
 
 The signing method follows the settings, never the token's own header, so a
 token can't choose an easier algorithm: HS256 when SUPABASE_JWT_SECRET is set,
@@ -80,7 +81,7 @@ def authenticate(authorization: Optional[str], reviewer_name) -> Reviewer:
     claims = _verified_claims(token)
     if claims.get("is_anonymous") is not False:
         raise Refused(403, "anonymous")
-    if claims.get("aal") != "aal2":
+    if config.REVIEW_REQUIRE_MFA and claims.get("aal") != "aal2":
         raise Refused(403, "two_factor_required")
     try:
         user_id = str(uuid.UUID(str(claims["sub"])))

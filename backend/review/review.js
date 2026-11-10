@@ -179,7 +179,12 @@ function showSignIn(message) {
           method: "POST",
           body: { email: email.value.trim(), password: password.value },
         }));
-        await secondFactor();
+        if (CFG.requireMfa !== false) {   // strict unless the server says otherwise
+          await secondFactor();
+        } else {
+          clearSay();
+          await start();
+        }
       } catch (error) {
         say(error.message, "error");
         button.disabled = false;

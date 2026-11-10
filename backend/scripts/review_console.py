@@ -7,6 +7,9 @@ Usage (from backend/):
     python -m scripts.review_console
 then open http://127.0.0.1:8100/review/
 
+Two-step sign-in (an authenticator code) is off here unless you pass
+--require-mfa. Turn it on before the console is hosted (docs/runbook.md).
+
 It reads REVIEW_DATABASE_URL, SUPABASE_URL and SUPABASE_ANON_KEY from .env
 (setup: kb/README.md, "Reviewing in the console"). It serves only the review
 console, not the scan API, and listens on this computer only unless --host is
@@ -70,7 +73,8 @@ def content_security_policy() -> str:
 
 
 def page_config() -> str:
-    values = {"supabaseUrl": config.SUPABASE_URL, "supabaseAnonKey": config.SUPABASE_ANON_KEY, "apiBase": ""}
+    values = {"supabaseUrl": config.SUPABASE_URL, "supabaseAnonKey": config.SUPABASE_ANON_KEY, "apiBase": "",
+              "requireMfa": config.REVIEW_REQUIRE_MFA}
     return f"window.REVIEW_CONFIG = {json.dumps(values)};\n"
 
 
@@ -104,11 +108,22 @@ def build_app(allowed_hosts: Optional[list[str]] = None) -> FastAPI:
     return app
 
 
-def main() -> int:
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the review console on this computer.")
     parser.add_argument("--host", help="listen on another address (this computer only, if left out)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    args = parser.parse_args()
+    parser.add_argument("--require-mfa", action="store_true", help="also require an authenticator code at sign-in")
+    return parser.parse_args(argv)
+
+
+def mfa_line(require_mfa: bool) -> str:
+    return ("Two-step sign-in: ON" if require_mfa
+            else "Two-step sign-in: OFF (local testing only; turn on before hosting)")
+
+
+def main() -> int:
+    args = parse_args()
+    config.REVIEW_REQUIRE_MFA = args.require_mfa   # this process only
     host = choose_host(args.host, os.environ.get("REVIEW_CONSOLE_HOST"))
 
     missing = missing_settings()
@@ -121,6 +136,7 @@ def main() -> int:
         print(f"WARNING: listening on {host}. Anyone who can reach it sees the sign-in page.")
     allowed = ["*"] if host == "0.0.0.0" else ["127.0.0.1", "localhost", host]   # noqa: S104
     print(f"Review console: http://{host}:{args.port}/review/  (Ctrl+C to stop)")
+    print(mfa_line(args.require_mfa))
     uvicorn.run(build_app(allowed), host=host, port=args.port, log_config=None)
     return 0
 

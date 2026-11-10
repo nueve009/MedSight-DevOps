@@ -131,6 +131,9 @@ SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")   # public: it goes 
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 # Comma-separated origins allowed to call the API from a browser (the hosted page). Empty = none.
 REVIEW_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("REVIEW_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+# Two-step sign-in (an authenticator code). On unless switched off, so a hosted console stays strict;
+# scripts/review_console.py turns it off for its own process unless given --require-mfa.
+REVIEW_REQUIRE_MFA = os.environ.get("REVIEW_REQUIRE_MFA", "on").strip().lower() in ("1", "on", "true", "yes")
 EVIDENCE_BUCKET = "kb-evidence"
 MAX_EVIDENCE_BYTES = 5 * 1024 * 1024
 MAX_EVIDENCE_BODY_BYTES = MAX_EVIDENCE_BYTES + 64 * 1024   # the file plus the multipart wrapping

@@ -12,6 +12,7 @@ from scripts import review_console as rc
 @pytest.fixture
 def settings(monkeypatch):
     monkeypatch.setattr(config, "ADMIN_ENABLED", False)
+    monkeypatch.setattr(config, "REVIEW_REQUIRE_MFA", False)
     monkeypatch.setattr(config, "SUPABASE_URL", "https://project.test")
     monkeypatch.setattr(config, "SUPABASE_ANON_KEY", "public-anon-key")
     monkeypatch.setattr(config, "REVIEW_DATABASE_URL", "postgresql://x")
@@ -55,7 +56,27 @@ def test_page_and_config_are_served_from_one_origin(client):
     assert client.get("/review/review.js").status_code == 200
     text = client.get("/review/config.js").text
     values = json.loads(re.search(r"= (\{.*\});", text).group(1))
-    assert values == {"supabaseUrl": "https://project.test", "supabaseAnonKey": "public-anon-key", "apiBase": ""}
+    assert values == {"supabaseUrl": "https://project.test", "supabaseAnonKey": "public-anon-key", "apiBase": "",
+                      "requireMfa": False}
+
+
+def test_the_page_is_told_when_two_step_is_on(client, monkeypatch):
+    monkeypatch.setattr(config, "REVIEW_REQUIRE_MFA", True)
+    assert '"requireMfa": true' in client.get("/review/config.js").text
+
+
+def test_the_launcher_is_off_by_default_and_the_flag_turns_it_on():
+    assert rc.parse_args([]).require_mfa is False
+    assert rc.parse_args(["--require-mfa"]).require_mfa is True
+
+
+def test_the_launcher_says_which_mode_it_is_in():
+    assert rc.mfa_line(False) == "Two-step sign-in: OFF (local testing only; turn on before hosting)"
+    assert rc.mfa_line(True) == "Two-step sign-in: ON"
+
+
+def test_the_page_is_strict_unless_told_otherwise():
+    assert "CFG.requireMfa !== false" in page_script()
 
 
 def test_no_secret_reaches_the_page(client, monkeypatch):

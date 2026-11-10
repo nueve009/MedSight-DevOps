@@ -32,6 +32,7 @@ def lookup(user_id):
 def settings(monkeypatch):
     monkeypatch.setattr(config, "SUPABASE_URL", URL)
     monkeypatch.setattr(config, "SUPABASE_JWT_SECRET", SECRET)
+    monkeypatch.setattr(config, "REVIEW_REQUIRE_MFA", True)
 
 
 def test_a_good_token_gives_the_name_from_the_reviewers_table():
@@ -68,6 +69,26 @@ def test_missing_or_malformed_headers_are_refused(header, status, reason):
 def test_refused_tokens(changes, status, reason):
     with pytest.raises(review_auth.Refused) as e:
         review_auth.authenticate(f"Bearer {token(**changes)}", lookup)
+    assert (e.value.status, e.value.reason) == (status, reason)
+
+
+@pytest.mark.parametrize("changes", [{}, {"aal": "aal1"}, {"aal": ...}])
+def test_with_two_step_off_a_password_session_is_enough(monkeypatch, changes):
+    monkeypatch.setattr(config, "REVIEW_REQUIRE_MFA", False)
+    assert review_auth.authenticate(f"Bearer {token(**changes)}", lookup).name == "Ana"
+
+
+@pytest.mark.parametrize("changes, status, reason", [
+    ({"secret": "another-secret-that-is-long-enough-to-sign-with"}, 401, "invalid_token"),
+    ({"exp": int(time.time()) - 60}, 401, "expired"),
+    ({"aud": "anon"}, 401, "invalid_token"),
+    ({"is_anonymous": True}, 403, "anonymous"),
+    ({"sub": str(uuid.uuid4())}, 403, "not_a_reviewer"),
+])
+def test_with_two_step_off_every_other_check_stays(monkeypatch, changes, status, reason):
+    monkeypatch.setattr(config, "REVIEW_REQUIRE_MFA", False)
+    with pytest.raises(review_auth.Refused) as e:
+        review_auth.authenticate(f"Bearer {token(**{'aal': 'aal1', **changes})}", lookup)
     assert (e.value.status, e.value.reason) == (status, reason)
 
 

@@ -226,7 +226,8 @@ and description only) and delete cached answers, and read `audit_log`.
 checking and approving `kb_*` rows. Approvals go straight to Supabase, so the
 deployed backend serves them within `KB_REFRESH_S` with no deploy.
 - Sign-in is a Supabase access token: signature, expiry, audience, not
-  anonymous, `aal2`, and active in `reviewers`. The name from that table is the
+  anonymous, active in `reviewers`, and `aal2` when `REVIEW_REQUIRE_MFA` is on
+  (the default; the local launcher turns it off). The name from that table is the
   actor; a name in a request body is never read.
 - It connects as `medsight_review`. The database repeats the key rules
   (`kb_review_guard`, `kb_check_approvable`), so the app can't approve what they

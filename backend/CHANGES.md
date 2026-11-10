@@ -5,6 +5,18 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-10 - Review console: two-step sign-in is a setting
+
+**Decided by Mon.** The authenticator step wasn't asked for and was rejecting
+sign-ins during setup. `REVIEW_REQUIRE_MFA` now controls it: on by default, so a
+hosted console stays strict, and off in `scripts/review_console.py` unless given
+`--require-mfa`. Everything else is still checked. The page is told which mode
+to use. Storage rules are pasted by hand (`kb/README.md`, "Two-step sign-in
+setting"), since applied migrations are never edited. Turning it back on before
+hosting is on the checklist in `docs/runbook.md`.
+
+---
+
 ## 2026-11-10 - Review console, phase 1 (runs locally)
 
 **Asked by Mon:** a web tool for the reviewers that can update the dataset

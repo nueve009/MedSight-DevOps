@@ -112,12 +112,11 @@ deployed backend uses `KB_BACKEND=postgres`.
    ```sql
    CREATE ROLE medsight_review_app LOGIN PASSWORD '<random password>' IN ROLE medsight_review;
    ```
-3. **Create the evidence bucket:** in the SQL editor, run the commented
-   "Supabase Storage" block at the end of `migrations/0006_review_console.sql`
-   (without the `--`).
+3. **Create the evidence bucket:** see "Two-step sign-in setting" below.
 4. **Add each reviewer's account:** in Supabase, Authentication, Users, "Add
-   user" with their email and a password, and copy their user ID. Check that
-   TOTP is enabled under Authentication, Multi-Factor.
+   user" with their email and a password, with Auto Confirm User ticked, and
+   copy their user ID. (TOTP under Authentication, Multi-Factor matters only
+   with two-step sign-in on.)
 5. **List the reviewers** in the SQL editor. The name here is what gets
    recorded on every approval:
    ```sql
@@ -143,9 +142,53 @@ shared secret; otherwise the console uses the project's published keys. Then:
 python -m scripts.review_console
 ```
 
-Open http://127.0.0.1:8100/review/ and sign in. The first time, the page shows
-a QR code to add to an authenticator app; after that it asks for the 6-digit
-code each time. Press Ctrl+C to stop it.
+Open http://127.0.0.1:8100/review/ and sign in with your email and password.
+Press Ctrl+C to stop it.
+
+### Two-step sign-in setting
+
+The authenticator code is controlled by `REVIEW_REQUIRE_MFA`. It defaults to on,
+so a hosted console stays strict. `python -m scripts.review_console` turns it off
+for its own process, unless you add `--require-mfa`, and says which mode it's in
+when it starts. With it off, an email and password are enough. Every other check
+stays: the account must be active in `reviewers`.
+
+The evidence bucket's rules must match the setting, or uploads are refused. The
+commented block in `migrations/0006_review_console.sql` requires the code, so
+paste one of these in the SQL editor.
+
+**(a) Two-step off (local use):**
+```sql
+DROP POLICY IF EXISTS kb_evidence_add ON storage.objects;
+DROP POLICY IF EXISTS kb_evidence_read ON storage.objects;
+CREATE POLICY kb_evidence_add ON storage.objects FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'kb-evidence' AND public.kb_is_active_reviewer());
+CREATE POLICY kb_evidence_read ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'kb-evidence' AND public.kb_is_active_reviewer());
+```
+
+**(b) Two-step back on (before hosting):**
+```sql
+DROP POLICY IF EXISTS kb_evidence_add ON storage.objects;
+DROP POLICY IF EXISTS kb_evidence_read ON storage.objects;
+CREATE POLICY kb_evidence_add ON storage.objects FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'kb-evidence' AND auth.jwt()->>'aal' = 'aal2' AND public.kb_is_active_reviewer());
+CREATE POLICY kb_evidence_read ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'kb-evidence' AND auth.jwt()->>'aal' = 'aal2' AND public.kb_is_active_reviewer());
+```
+
+**If you never ran the storage block,** run this first, then (a):
+```sql
+INSERT INTO storage.buckets (id, name, public) VALUES ('kb-evidence', 'kb-evidence', false)
+    ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.kb_is_active_reviewer() RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+    SELECT EXISTS (SELECT 1 FROM reviewers WHERE user_id = auth.uid() AND active)
+$$;
+REVOKE ALL ON FUNCTION public.kb_is_active_reviewer() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.kb_is_active_reviewer() TO authenticated;
+```
 
 ### FDA candidates
 

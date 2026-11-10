@@ -127,7 +127,7 @@ as `X-Admin-Key`. App keys never work here.
 
 The review console's routes (`/admin/kb/...` and `/admin/review/stats`, listed
 at the top of `app/review.py`) sit behind the same `ADMIN_ENABLED` switch but
-use a reviewer's Supabase sign-in with two-factor (`Authorization: Bearer`),
+use a reviewer's Supabase sign-in (`Authorization: Bearer`; two-step via `REVIEW_REQUIRE_MFA`),
 not `X-Admin-Key`. The mobile app never calls them. Run them locally with
 `python -m scripts.review_console`; see `kb/README.md`.
 

@@ -136,6 +136,7 @@ def storage():
 @pytest.fixture
 def client(monkeypatch, store, storage):
     monkeypatch.setattr(config, "ADMIN_ENABLED", True)
+    monkeypatch.setattr(config, "REVIEW_REQUIRE_MFA", True)
     monkeypatch.setattr(config, "SUPABASE_URL", URL)
     monkeypatch.setattr(config, "SUPABASE_JWT_SECRET", SECRET)
     app = FastAPI()

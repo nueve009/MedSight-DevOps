@@ -5,4 +5,5 @@ window.REVIEW_CONFIG = {
   supabaseUrl: "https://<project-ref>.supabase.co",
   supabaseAnonKey: "<anon key>",
   apiBase: "https://<your backend host>",
+  requireMfa: true,
 };
