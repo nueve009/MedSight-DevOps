@@ -35,6 +35,9 @@ python -m scripts.kb_make_scans sorted_output/packaging   # draft eval scans fro
 python -m scripts.migrate [--check]                       # apply migrations/ to Supabase (MIGRATION_DATABASE_URL)
 python -m scripts.store_admin export --out <dir> | restore <file> | purge   # nightly backup and cleanup
 python -m scripts.smoke_test --url <base url>              # after a deploy; key in SMOKE_API_KEY
+python -m scripts.fda_lookup [--brands "A,B"] [--refresh]  # FDA drafts -> kb/staging/ (rate-limited, team's list only)
+python -m scripts.fda_lookup --push --by NAME              # drafts -> kb_fda_lookups candidates (owner connection)
+python -m scripts.review_console                           # review console at http://127.0.0.1:8100/review/
 ```
 
 `kb/staging/` (git-ignored) holds the team's raw scraper output and the
@@ -217,6 +220,25 @@ and description only) and delete cached answers, and read `audit_log`.
 - The tier can't be changed, so admins can never set "reviewed".
 - `tests/test_drills.py` holds the failure drills; `docs/runbook.md` the manual
   steps.
+
+**Review console** (`app/review.py`, `app/review_auth.py`, `app/review_store.py`,
+`review/`, `scripts/review_console.py`, migration 0006): the team's page for
+checking and approving `kb_*` rows. Approvals go straight to Supabase, so the
+deployed backend serves them within `KB_REFRESH_S` with no deploy.
+- Sign-in is a Supabase access token: signature, expiry, audience, not
+  anonymous, `aal2`, and active in `reviewers`. The name from that table is the
+  actor; a name in a request body is never read.
+- It connects as `medsight_review`. The database repeats the key rules
+  (`kb_review_guard`, `kb_check_approvable`), so the app can't approve what they
+  refuse. `kb_reviews` is append-only.
+- Tables come only from `review_store.TABLES`. Don't add a route that takes a
+  table or column name any other way.
+- `review/review.js` shows server values with `textContent` only; a test fails on
+  `innerHTML`.
+- The launcher serves only the console (no scan routes) and listens on
+  127.0.0.1 unless `--host` is passed.
+- Tests: `tests/test_review_routes.py` uses a fake store; `test_review_store.py`
+  and `test_review_migration.py` need `MEDSIGHT_TEST_DATABASE_URL`.
 
 **Auth** (`api.require_api_key`): checks the `X-API-Key` header against
 `MEDSIGHT_API_KEY` using a constant-time comparison. If the server key isn't

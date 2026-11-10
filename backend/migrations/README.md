@@ -39,7 +39,17 @@ change is a new, higher-numbered file.
      `DATABASE_URL`, and re-read every `KB_REFRESH_S` (60) seconds.
 
 The app's public Supabase keys (`anon`, `authenticated`) can't read or write
-these tables: RLS is on, and the only policies are for `medsight_backend`.
+these tables: RLS is on, and the only policies are for `medsight_backend`
+and, from `0006`, `medsight_review`.
+
+**The review console's login** (after `0006`): `0006` creates the `NOLOGIN`
+role `medsight_review`. The owner then creates the login that inherits from it:
+```sql
+CREATE ROLE medsight_review_app LOGIN PASSWORD '<random password>' IN ROLE medsight_review;
+```
+It can read and edit the `kb_*` rows and add reviews and evidence. It can't
+touch `answers`, `rate_limits`, `scan_log` or `audit_log`. The other steps are
+in `kb/README.md`, "Reviewing in the console".
 
 ## If the database is down
 

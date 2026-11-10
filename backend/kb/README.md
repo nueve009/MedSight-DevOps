@@ -91,6 +91,93 @@ on the portal before approving.
 9. **Keep a copy in git:** `python -m scripts.kb_build --pull --csv-out kb`
    writes the approved rows into the CSVs here; open a PR with them.
 
+## Reviewing in the console
+
+The console is a web page for checking rows, comparing them with box photos
+and FDA candidates, hearing what users will hear, and approving them. It runs
+on your own laptop and writes straight to Supabase. **Approvals reach the app
+within about a minute (`KB_REFRESH_S`), with no deploy**, as long as the
+deployed backend uses `KB_BACKEND=postgres`.
+
+### First-time setup (once, by the project owner)
+
+1. **Apply migration 0006** (needs `MIGRATION_DATABASE_URL`, see
+   `migrations/README.md`):
+   ```powershell
+   python -m scripts.migrate --check
+   python -m scripts.migrate
+   ```
+2. **Create the console's database login** in the Supabase SQL editor, with a
+   long random password that never goes in git:
+   ```sql
+   CREATE ROLE medsight_review_app LOGIN PASSWORD '<random password>' IN ROLE medsight_review;
+   ```
+3. **Create the evidence bucket:** in the SQL editor, run the commented
+   "Supabase Storage" block at the end of `migrations/0006_review_console.sql`
+   (without the `--`).
+4. **Add each reviewer's account:** in Supabase, Authentication, Users, "Add
+   user" with their email and a password, and copy their user ID. Check that
+   TOTP is enabled under Authentication, Multi-Factor.
+5. **List the reviewers** in the SQL editor. The name here is what gets
+   recorded on every approval:
+   ```sql
+   INSERT INTO reviewers (user_id, name) VALUES ('<user id>', 'Ana'), ('<user id>', 'Ben');
+   ```
+   To remove someone: `UPDATE reviewers SET active = false WHERE name = 'Ana';`
+
+### Each reviewer's laptop
+
+Install the packages (`pip install -r requirements.txt` picks up the two new
+ones), then add this to `backend/.env`. Get the values from the owner:
+
+```
+REVIEW_DATABASE_URL=postgresql://medsight_review_app.<project-ref>:<password>@<pooler host>:5432/postgres
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_ANON_KEY=<the project's public anon key>
+```
+
+Add `SUPABASE_JWT_SECRET` only if the project still signs sessions with a
+shared secret; otherwise the console uses the project's published keys. Then:
+
+```powershell
+python -m scripts.review_console
+```
+
+Open http://127.0.0.1:8100/review/ and sign in. The first time, the page shows
+a QR code to add to an authenticator app; after that it asks for the 6-digit
+code each time. Press Ctrl+C to stop it.
+
+### FDA candidates
+
+```powershell
+python -m scripts.fda_lookup                       # drafts, as in step 3 of the workflow
+python -m scripts.fda_lookup --push --by "Ana"     # upload them (needs KB_ADMIN_DATABASE_URL)
+```
+
+On a product's page, the console lists the candidates for its brand with
+warnings: both OTC and Rx exist, export only, expired or expiring soon, a DRHR
+number not classified as a household remedy, or a strength the script couldn't
+read. **Match the number printed on the box and confirm it on the portal.**
+"Use these values" counts as your edit, so someone else must approve the row.
+
+### The rules
+
+- You can't approve a row you entered or last edited; it isn't even in your
+  queue.
+- Approve unlocks only when every checklist item is ticked, and the dataset
+  rules must still pass.
+- If a row changed while you were reading it, the approval is refused.
+- Every decision is kept permanently in `kb_reviews`, with a copy of the row.
+
+### Closing the Table Editor route
+
+Approving in the Table Editor (below) keeps working as a fallback. Once the
+console is in regular use, switch it off in the SQL editor:
+
+```sql
+UPDATE kb_settings SET allow_table_editor_approval = false;
+```
+
 ## Approving rows in Supabase
 
 In the Supabase dashboard, open **Table Editor**, then `kb_ingredients`,

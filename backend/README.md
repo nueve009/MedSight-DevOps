@@ -125,6 +125,12 @@ as `X-Admin-Key`. App keys never work here.
 | `DELETE /admin/answers/{cache_key}` | Removes it; the next scan answers afresh |
 | `GET /admin/audit?limit=` | Every admin write, newest first: who, what, before, after |
 
+The review console's routes (`/admin/kb/...` and `/admin/review/stats`, listed
+at the top of `app/review.py`) sit behind the same `ADMIN_ENABLED` switch but
+use a reviewer's Supabase sign-in with two-factor (`Authorization: Bearer`),
+not `X-Admin-Key`. The mobile app never calls them. Run them locally with
+`python -m scripts.review_console`; see `kb/README.md`.
+
 Every write and its audit row are saved together. A database outage gives a
 503 with nothing changed. `docs/runbook.md` has the step-by-step for a bad
 answer.

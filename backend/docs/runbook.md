@@ -127,6 +127,21 @@ In Supabase, never through admin routes. See `kb/README.md` for the full steps.
 4. `python -m scripts.kb_build --pull`, then `python -m scripts.eval_kb` must pass.
 5. To take a row off the air at once, set its `approved` to false.
 
+### Using the review console
+
+The console approves rows from a laptop with no deploy: `python -m scripts.review_console`, then http://127.0.0.1:8100/review/. Setup and rules are in `kb/README.md`, "Reviewing in the console".
+
+| Problem | What to do |
+|---|---|
+| "This account can't use the review console" | The account isn't in `reviewers`, or `active` is false. |
+| "Enter your two-factor code first" | The session didn't finish the code step. Sign out and sign in again. |
+| Lost authenticator | In Supabase, Authentication, Users, remove that user's MFA factor. They set it up again at next sign-in. |
+| Someone leaves the team | `UPDATE reviewers SET active = false WHERE name = '<name>';` and delete their Supabase user. |
+| The login may have leaked | `ALTER ROLE medsight_review_app PASSWORD '<new>';` and update each laptop's `REVIEW_DATABASE_URL`. |
+| An approved row isn't being spoken | Check that its ingredients and an `indications` passage are approved too. The backend's log lists rows it dropped. |
+
+Table Editor approval stays on as a fallback until `kb_settings.allow_table_editor_approval` is set to false.
+
 ## 7. A provider is down
 
 | What's down | What users hear | What to do |

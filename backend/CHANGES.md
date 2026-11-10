@@ -5,6 +5,49 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-10 - Review console, phase 1 (runs locally)
+
+**Asked by Mon:** a web tool for the reviewers that can update the dataset
+without a deploy. Approvals go to Supabase and the deployed backend serves them
+within `KB_REFRESH_S`.
+
+**Added**
+- `migrations/0006_review_console.sql` (**not yet run**): `reviewers`,
+  `kb_reviews` (append-only), `kb_evidence`, `kb_fda_lookups`, `kb_settings`,
+  `review_state` and `last_edited_by`, role `medsight_review`. The Storage
+  bucket is a commented block to run by hand, because Storage tables exist only
+  in a Supabase project.
+- `scripts/fda_lookup.py --push --by NAME`: draft rows into `kb_fda_lookups`.
+- `app/review_auth.py`, `app/review_store.py`, `app/review.py`: the API.
+- `review/` (plain HTML and JavaScript, no outside code) and
+  `scripts/review_console.py`: `python -m scripts.review_console` on 127.0.0.1:8100.
+- `PyJWT[crypto]` and `python-multipart` in `requirements.txt`.
+
+**Decisions**
+- The approval sends the `updated_at` of the row the reviewer read, so a row
+  edited in between is refused rather than approved unseen.
+- A draft may leave its FDA values and description empty (they often come later
+  from a candidate); approving needs them all.
+- Every reviewer may edit any row. Editing makes you its last editor, so you
+  can't approve it.
+- `0006` has no `schema_version` insert: `scripts/migrate.py` records every file.
+- No `Pillow` in the requirements, so uploads are checked by their first bytes
+  and not re-encoded. Photo metadata stays in the file.
+- `kb_is_review_role()` checks real membership, not `pg_has_role`, so a superuser
+  can't pass as the review role once Table Editor approval is off.
+
+**Checked:** 0006 and the store on a throwaway local Postgres 18, as the review
+role. The page was clicked through in a browser against that database, with a
+stand-in for Supabase Auth: sign-in, two-factor, queue, row page, approve. An
+HTML injection attempt in a row showed as plain text.
+
+**Not checked:** real Supabase Auth, Storage and its policies, and first-time
+two-factor enrolment on a real project; none of those can be tested locally.
+The Vercel hosting is prepared (`review/vercel.json`, `config.example.js`) but
+not deployed. `vercel.json` has placeholder hosts to replace.
+
+---
+
 ## 2026-11-10 - Web answers say "prescription" when the page does
 
 **Asked by Mon:** a prescription medicine outside the reviewed list should
