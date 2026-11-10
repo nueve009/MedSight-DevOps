@@ -15,7 +15,10 @@ wording must agree (`web_search.page_states_rx`); a page that also says
 non-prescription or OTC doesn't count. Stored as `rx` in the answer's
 `product` JSON, so no migration, and web answers cached before this keep no
 prescription line until they expire. The ingredient and general tiers are
-unchanged: nothing there comes from a source that states it. The sentence is
+unchanged: nothing there comes from a source that states it. The scan log's
+`web_rx` is `yes`, `no` or `model_only` (the model said so but the page's
+wording didn't). It works only with the web tier on
+(`WEB_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY`). The sentence is
 new spoken wording, so it still needs the team's approval and a listen on the
 phone's text-to-speech (`speech.py`).
 

@@ -75,7 +75,11 @@ def test_general_answer():
 def test_warning_always_comes_before_the_description():
     spoken = speech.answer(BIOGESIC, speech.WEB, "UNIQUE-DESCRIPTION", rx=True, source_site="Hello Doctor")
     rx_sentence = "According to Hello Doctor, this is a prescription medicine."
-    assert spoken.index(speech.WEB_WARNING) < spoken.index(rx_sentence)
+    assert spoken.index(speech.WEB_WARNING) < spoken.index(rx_sentence) < spoken.index("UNIQUE-DESCRIPTION")
+    assert speech.RX_LINE not in spoken
+    assert speech.WEB_RX_LINE_NO_SITE in speech.answer(BIOGESIC, speech.WEB, "A description.", rx=True)
+    for tier in (speech.INGREDIENT, speech.GENERAL):   # these tiers have no source that can say it
+        assert "prescription medicine" not in speech.answer(BIOGESIC, tier, "A description.", rx=True)
     for tier in (speech.INGREDIENT, speech.WEB, speech.GENERAL):
         spoken = speech.answer(BIOGESIC, tier, "UNIQUE-DESCRIPTION")
         assert spoken.index("reviewed") < spoken.lower().index("unique-description")

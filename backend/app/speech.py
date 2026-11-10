@@ -29,6 +29,8 @@ REVIEWED, INGREDIENT, WEB, GENERAL = "reviewed", "ingredient", "web", "general"
 REVIEWED_LINE = "Our team has reviewed this information."
 # Named RX_* rather than "prescription" so code scanners don't take fixed app wording for medical data.
 RX_LINE = "This is a prescription medicine."
+WEB_RX_LINE = "According to {site}, this is a prescription medicine."
+WEB_RX_LINE_NO_SITE = "The source says this is a prescription medicine."
 INGREDIENT_INTRO = "Our team hasn't reviewed this product yet. Based on its ingredients,"
 WEB_WARNING = ("This medicine isn't in our reviewed list. The following information comes from "
                "the web and hasn't been reviewed by our team.")
@@ -108,7 +110,9 @@ def name_line(product: ParsedProduct) -> str:
 def answer(product: ParsedProduct, tier: str, description: str, rx: bool = False,
            caveat: bool = False, source_site: Optional[str] = None) -> str:
     parts = [name_line(product)]
-    if rx and tier != WEB:
+    # Never for the ingredient or general tiers: ingredient text can't say a
+    # product needs a prescription, and the general tier is the model's memory.
+    if rx and tier == REVIEWED:
         parts.append(RX_LINE)
     description = _sentence(description)
     if tier == REVIEWED:
@@ -118,7 +122,7 @@ def answer(product: ParsedProduct, tier: str, description: str, rx: bool = False
     elif tier == WEB:
         parts.append(WEB_WARNING)
         if rx:
-            parts.append(f"According to {source_site}, this is a prescription medicine." if source_site else RX_LINE)
+            parts.append(WEB_RX_LINE.format(site=source_site) if source_site else WEB_RX_LINE_NO_SITE)
         parts.append(f"According to {source_site}, {_lower_first(description)}" if source_site else description)
     else:
         parts += [GENERAL_WARNING, description]

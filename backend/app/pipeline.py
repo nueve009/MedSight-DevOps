@@ -200,7 +200,7 @@ def _finish(record: dict, response: dict, started: float, cache: Store) -> dict:
         **{k: record.get(k) for k in ("status", "rescan_reason", "hint", "tier", "cache", "parse_cache",
                                        "match", "matched_product_id", "kb_version", "attempt",
                                        "product_count", "parse_confidence", "description_status",
-                                       "parse_ms", "describe_ms", "web", "web_ms", "client", "platform",
+                                       "parse_ms", "describe_ms", "web", "web_rx", "web_ms", "client", "platform",
                                        "app_version", "device",
                                        "key")},
         "latency_ms": round((time.perf_counter() - started) * 1000),

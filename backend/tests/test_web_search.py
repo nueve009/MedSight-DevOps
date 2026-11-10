@@ -175,6 +175,22 @@ def test_no_prescription_line_unless_model_and_page_agree(cache, web_on, fake_ll
     assert "prescription medicine" not in r["spoken_text"]
 
 
+@pytest.mark.parametrize("page_text, model_says, logged", [
+    (RX_PAGE.text, True, "yes"),
+    (BIOGESIC_PAGE.text, True, "model_only"),
+    (BIOGESIC_PAGE.text + " Available over-the-counter.", True, "model_only"),
+    (BIOGESIC_PAGE.text + " Available without a prescription.", True, "model_only"),
+    (RX_PAGE.text, False, "no"),
+])
+def test_the_scan_log_records_the_prescription_decision(web_on, fake_llm, page_text, model_says, logged):
+    web_on.results = [SearchResult(TFD, "Biogesic", page_text)]
+    fake_llm.reply(SUMMARY, {**summary(), "prescription": model_says})
+    record = {}
+    product = llm_parse.ParsedProduct("Biogesic", ("Paracetamol",), ("500 mg",))
+    answer = web_search.lookup(product, record, lambda: None)
+    assert record["web_rx"] == logged and answer.rx is (logged == "yes")
+
+
 def test_a_reply_without_the_field_is_not_prescription(cache, web_on, fake_llm):
     web_on.results = [RX_PAGE]
     fake_llm.reply(SUMMARY, summary())

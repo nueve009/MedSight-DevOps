@@ -263,7 +263,9 @@ def lookup(product: ParsedProduct, record: dict, budget: Callable[[], None]) -> 
     chosen, chosen_text = sources[index - 1]
     url = chosen.url
     record["web"] = "found"
-    return WebAnswer(description, url, site_name(url), rx=model_says_rx and page_states_rx(chosen_text))
+    rx = model_says_rx and page_states_rx(chosen_text)
+    record["web_rx"] = "yes" if rx else "model_only" if model_says_rx else "no"
+    return WebAnswer(description, url, site_name(url), rx=rx)
 
 
 # --- "not found" markers ---
