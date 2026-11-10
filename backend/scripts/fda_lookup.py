@@ -4,6 +4,7 @@ Usage (from backend/):
     python -m scripts.fda_lookup
     python -m scripts.fda_lookup --brands "Biogesic,Neozep Forte"
     python -m scripts.fda_lookup --limit 5 --refresh
+    python -m scripts.fda_lookup --push --by "Your Name"     upload the draft CSV as review console candidates
 
 The team's list is every brand in kb/staging/brands.txt plus every brand_name in
 kb/staging/tfd_products_draft.csv. A brand outside that list is refused.
@@ -272,6 +273,69 @@ def choose_brands(team: list[str], wanted: list[str] | None, limit: int | None) 
     return chosen[:limit] if limit is not None else chosen
 
 
+# ---------------------------------------------------------------- push ---
+
+def read_draft(path: Path) -> tuple[list[dict], int]:
+    """(rows that can be candidates, rows skipped because the portal gave no registration number)."""
+    with path.open(newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    usable = [row for row in rows if row.get("fda_reg_no", "").strip()]
+    return usable, len(rows) - len(usable)
+
+
+def is_export_only(row: dict) -> bool:
+    return "export only" in f"{row.get('fda_reg_no', '')} {row.get('note', '')}".lower()
+
+
+PUSH_SQL = (
+    "INSERT INTO kb_fda_lookups (brand_query, brand_name, generic_name, strength, dosage_form, fda_reg_no, reg_expiry, "
+    "classification, classification_raw, manufacturer, portal_checked_on, note, export_only, pushed_by) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+    "ON CONFLICT (fda_reg_no) DO UPDATE SET brand_query = EXCLUDED.brand_query, brand_name = EXCLUDED.brand_name, "
+    "generic_name = EXCLUDED.generic_name, strength = EXCLUDED.strength, dosage_form = EXCLUDED.dosage_form, "
+    "reg_expiry = EXCLUDED.reg_expiry, classification = EXCLUDED.classification, "
+    "classification_raw = EXCLUDED.classification_raw, manufacturer = EXCLUDED.manufacturer, "
+    "portal_checked_on = EXCLUDED.portal_checked_on, note = EXCLUDED.note, export_only = EXCLUDED.export_only, "
+    "pushed_by = EXCLUDED.pushed_by, pushed_at = now()"
+)
+
+
+def push_rows(rows: list[dict], by: str, conninfo: str) -> int:
+    """Add or update candidates in kb_fda_lookups, in one transaction. Never touches the kb_* dataset."""
+    import psycopg
+
+    from app import config
+
+    with psycopg.connect(conninfo, sslmode=config.DATABASE_SSLMODE, connect_timeout=10,
+                         prepare_threshold=None) as conn, conn.transaction():
+        for row in rows:
+            conn.execute(PUSH_SQL, (
+                row["brand_query"], row["brand_name"], row["generic_name"], row["strength"], row["dosage_form"],
+                row["fda_reg_no"].strip(), row["reg_expiry"] or None, row["classification"],
+                row["classification_raw"], row["manufacturer"], row["portal_checked_on"] or None, row["note"],
+                is_export_only(row), by))
+    return len(rows)
+
+
+def push(staging_dir: Path, by: str) -> int:
+    from scripts.kb_build import admin_conninfo
+
+    conninfo = admin_conninfo()
+    if not conninfo:
+        print("Set KB_ADMIN_DATABASE_URL (or MIGRATION_DATABASE_URL) to the database owner's connection string.")
+        return 1
+    path = staging_dir / "fda_lookup_draft.csv"
+    if not path.exists():
+        print(f"{path} doesn't exist. Run the lookup first.")
+        return 1
+    rows, skipped = read_draft(path)
+    pushed = push_rows(rows, by, conninfo)
+    print(f"Pushed {pushed} candidates to kb_fda_lookups ({sum(map(is_export_only, rows))} export-only, "
+          f"{skipped} skipped with no registration number).")
+    print("They are candidates only: a reviewer still picks one for a product and confirms it on the portal.")
+    return 0
+
+
 # ---------------------------------------------------------------- main ---
 
 def write_outputs(out_dir: Path, rows: list[dict], not_found: list[str]) -> None:
@@ -329,9 +393,15 @@ def main() -> int:
     ap.add_argument("--limit", type=int, help="look up only the first N brands")
     ap.add_argument("--refresh", action="store_true", help="ask the portal again even for cached brands")
     ap.add_argument("--staging-dir", type=Path, default=STAGING_DIR)
+    ap.add_argument("--push", action="store_true", help="upload the draft CSV to kb_fda_lookups; no portal calls")
+    ap.add_argument("--by", help="with --push: your name, recorded as pushed_by")
     args = ap.parse_args()
     if args.limit is not None and args.limit < 1:
         ap.error("--limit must be at least 1")
+    if args.push:
+        if not args.by or not args.by.strip():
+            ap.error("--push needs --by NAME")
+        return push(args.staging_dir, args.by.strip())
 
     team = team_brands(args.staging_dir)
     if not team:

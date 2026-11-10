@@ -249,6 +249,71 @@ def test_a_failed_lookup_is_not_reported_as_not_found(portal_replies, tmp_path, 
     assert not (tmp_path / "cache" / "broken.json").exists()
 
 
+def draft_row(**changes):
+    return {**dict.fromkeys(f.DRAFT_FIELDS, ""), "brand_query": "Testflu", "fda_reg_no": "DR-XY00000",
+            "reg_expiry": "2030-01-01", **changes}
+
+
+class FakeTransaction:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class FakeConnection(FakeTransaction):
+    def __init__(self):
+        self.executed = []
+
+    def transaction(self):
+        return FakeTransaction()
+
+    def execute(self, sql, params):
+        self.executed.append((sql, params))
+
+
+def test_push_uploads_candidates_only(monkeypatch):
+    conn = FakeConnection()
+    monkeypatch.setattr("psycopg.connect", lambda *a, **k: conn)
+    assert f.push_rows([draft_row(), draft_row(fda_reg_no="DR-XY00001", reg_expiry="")], "Ana", "postgresql://x") == 2
+    sql, params = conn.executed[0]
+    assert "kb_fda_lookups" in sql and "kb_products" not in sql
+    assert params[5] == "DR-XY00000" and params[-1] == "Ana"
+    assert conn.executed[1][1][6] is None   # no expiry -> NULL, not an empty date
+
+
+@pytest.mark.parametrize("row, expected", [
+    (draft_row(fda_reg_no="DR-XY1 (FOR EXPORT ONLY)"), True),
+    (draft_row(note="For Export Only"), True),
+    (draft_row(), False),
+])
+def test_export_only_comes_from_the_portal_text(row, expected):
+    assert f.is_export_only(row) is expected
+
+
+def test_rows_with_no_registration_number_are_not_pushed(tmp_path):
+    path = tmp_path / "fda_lookup_draft.csv"
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=f.DRAFT_FIELDS)
+        writer.writeheader()
+        writer.writerows([draft_row(), draft_row(fda_reg_no="  ")])
+    rows, skipped = f.read_draft(path)
+    assert len(rows) == 1 and skipped == 1
+
+
+def test_push_refuses_to_run_without_a_name(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["fda_lookup", "--push"])
+    with pytest.raises(SystemExit):
+        f.main()
+
+
+def test_push_makes_no_portal_requests(portal_replies, monkeypatch, tmp_path):
+    monkeypatch.setattr("scripts.kb_build.admin_conninfo", lambda: "")
+    assert f.push(tmp_path, "Ana") == 1   # no owner connection string set
+    assert portal_replies["calls"] == []
+
+
 def write_team_files(folder):
     (folder / "brands.txt").write_text(
         "# comment\nBiogesic\nNeozep Forte\nhttps://example.test/drug/x\n\n", encoding="utf-8")
