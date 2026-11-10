@@ -8,9 +8,10 @@ only if the signature is valid, it hasn't expired, its audience is
 never used. With config.REVIEW_REQUIRE_MFA on (the default), the authenticator
 code must have been entered too (aal2); only the local launcher turns it off.
 
-The signing method follows the settings, never the token's own header, so a
-token can't choose an easier algorithm: HS256 when SUPABASE_JWT_SECRET is set,
-otherwise RS256 or ES256 with the project's published keys.
+A token says how it was signed, and each method is tied to its own key, so a
+token can't pick an easier one: HS256 only ever uses SUPABASE_JWT_SECRET, and
+RS256 or ES256 only ever use the project's published keys. A project that has
+moved to published keys can still have an old secret in its settings.
 """
 import logging
 import uuid
@@ -19,6 +20,7 @@ from typing import Optional
 
 import jwt
 from fastapi import Header, HTTPException, Request
+from jwt.algorithms import has_crypto
 
 from app import config
 
@@ -26,6 +28,8 @@ log = logging.getLogger(__name__)
 
 AUDIENCE = "authenticated"
 JWKS_CACHE_S = 600
+LEEWAY_S = 30   # a laptop's clock may be a little off from Supabase's
+PUBLISHED_KEY_ALGORITHMS = ("RS256", "ES256")
 _jwk_clients: dict[str, jwt.PyJWKClient] = {}
 
 
@@ -46,30 +50,56 @@ class Refused(Exception):
 def _jwk_client() -> jwt.PyJWKClient:
     url = f"{config.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
     if url not in _jwk_clients:
-        _jwk_clients[url] = jwt.PyJWKClient(url, cache_keys=True, lifespan=JWKS_CACHE_S, timeout=5)
+        _jwk_clients[url] = jwt.PyJWKClient(url, cache_keys=True, lifespan=JWKS_CACHE_S, timeout=5,
+                                            headers={"apikey": config.SUPABASE_ANON_KEY})
     return _jwk_clients[url]
 
 
 def _verified_claims(token: str) -> dict:
-    options = {"require": ["exp", "sub", "aud"]}
-    issuer = f"{config.SUPABASE_URL}/auth/v1" if config.SUPABASE_URL else None
-    if config.SUPABASE_JWT_SECRET:
-        key, algorithms = config.SUPABASE_JWT_SECRET, ["HS256"]
-    elif config.SUPABASE_URL:
-        try:
-            key, algorithms = _jwk_client().get_signing_key_from_jwt(token).key, ["RS256", "ES256"]
-        except jwt.PyJWKClientConnectionError as e:
-            raise Refused(503, "signing_keys_unavailable") from e
-        except (jwt.PyJWKClientError, jwt.InvalidTokenError) as e:
-            raise Refused(401, "unknown_signing_key") from e
-    else:
+    if not config.SUPABASE_JWT_SECRET and not config.SUPABASE_URL:
         raise Refused(503, "auth_not_configured")
     try:
-        return jwt.decode(token, key, algorithms=algorithms, audience=AUDIENCE, issuer=issuer, options=options)
-    except jwt.ExpiredSignatureError as e:
-        raise Refused(401, "expired") from e
+        algorithm = jwt.get_unverified_header(token).get("alg")
     except jwt.InvalidTokenError as e:
         raise Refused(401, "invalid_token") from e
+
+    if algorithm == "HS256" and config.SUPABASE_JWT_SECRET:
+        key = config.SUPABASE_JWT_SECRET
+    elif algorithm in PUBLISHED_KEY_ALGORITHMS and config.SUPABASE_URL:
+        key = _published_key(token)
+    else:
+        raise Refused(401, "alg_not_allowed")
+
+    issuer = f"{config.SUPABASE_URL}/auth/v1" if config.SUPABASE_URL else None
+    options = {"require": ["exp", "sub", "aud"]}
+    try:
+        return jwt.decode(token, key, algorithms=[algorithm], audience=AUDIENCE, issuer=issuer, options=options,
+                          leeway=LEEWAY_S)
+    except jwt.InvalidTokenError as e:
+        raise Refused(401, _reason(e)) from e
+
+
+def _published_key(token: str):
+    if not has_crypto:
+        raise Refused(503, "missing_crypto_backend")
+    try:
+        return _jwk_client().get_signing_key_from_jwt(token).key
+    except jwt.PyJWKClientConnectionError as e:
+        raise Refused(503, "signing_keys_unavailable") from e
+    except (jwt.PyJWKClientError, jwt.InvalidTokenError) as e:
+        raise Refused(401, "no_matching_kid") from e
+
+
+def _reason(error: jwt.InvalidTokenError) -> str:
+    """Why a token failed, for the log. Reviewers only ever see "Please sign in again."."""
+    for kind, reason in ((jwt.ExpiredSignatureError, "expired"), (jwt.InvalidSignatureError, "bad_signature"),
+                         (jwt.InvalidAudienceError, "bad_audience"), (jwt.InvalidIssuerError, "bad_issuer"),
+                         (jwt.ImmatureSignatureError, "not_yet_valid"), (jwt.InvalidIssuedAtError, "not_yet_valid"),
+                         (jwt.MissingRequiredClaimError, "missing_claim"),
+                         (jwt.InvalidAlgorithmError, "alg_not_allowed")):
+        if isinstance(error, kind):
+            return reason
+    return "invalid_token"
 
 
 def authenticate(authorization: Optional[str], reviewer_name) -> Reviewer:

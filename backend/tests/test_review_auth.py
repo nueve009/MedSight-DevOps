@@ -1,4 +1,8 @@
 """Who may use the review console. Tokens are signed here with test keys; no network."""
+import base64
+import hashlib
+import hmac
+import json
 import time
 import uuid
 
@@ -54,11 +58,11 @@ def test_missing_or_malformed_headers_are_refused(header, status, reason):
 
 
 @pytest.mark.parametrize("changes, status, reason", [
-    ({"secret": "another-secret-that-is-long-enough-to-sign-with"}, 401, "invalid_token"),
+    ({"secret": "another-secret-that-is-long-enough-to-sign-with"}, 401, "bad_signature"),
     ({"exp": int(time.time()) - 60}, 401, "expired"),
-    ({"exp": ...}, 401, "invalid_token"),
-    ({"aud": "anon"}, 401, "invalid_token"),
-    ({"iss": "https://other.test/auth/v1"}, 401, "invalid_token"),
+    ({"exp": ...}, 401, "missing_claim"),
+    ({"aud": "anon"}, 401, "bad_audience"),
+    ({"iss": "https://other.test/auth/v1"}, 401, "bad_issuer"),
     ({"is_anonymous": True}, 403, "anonymous"),
     ({"is_anonymous": ...}, 403, "anonymous"),
     ({"aal": "aal1"}, 403, "two_factor_required"),
@@ -79,9 +83,9 @@ def test_with_two_step_off_a_password_session_is_enough(monkeypatch, changes):
 
 
 @pytest.mark.parametrize("changes, status, reason", [
-    ({"secret": "another-secret-that-is-long-enough-to-sign-with"}, 401, "invalid_token"),
+    ({"secret": "another-secret-that-is-long-enough-to-sign-with"}, 401, "bad_signature"),
     ({"exp": int(time.time()) - 60}, 401, "expired"),
-    ({"aud": "anon"}, 401, "invalid_token"),
+    ({"aud": "anon"}, 401, "bad_audience"),
     ({"is_anonymous": True}, 403, "anonymous"),
     ({"sub": str(uuid.uuid4())}, 403, "not_a_reviewer"),
 ])
@@ -103,7 +107,7 @@ def test_an_unsigned_token_is_refused():
     unsigned = jwt.encode(claims(), "", algorithm="none")
     with pytest.raises(review_auth.Refused) as e:
         review_auth.authenticate(f"Bearer {unsigned}", lookup)
-    assert e.value.reason == "invalid_token"
+    assert e.value.reason == "alg_not_allowed"
 
 
 class FakeJwkClient:
@@ -132,10 +136,6 @@ def test_a_token_cannot_switch_to_a_shared_secret_signed_with_the_public_key(mon
     pem = public.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
     monkeypatch.setattr(config, "SUPABASE_JWT_SECRET", "")
     monkeypatch.setattr(review_auth, "_jwk_client", lambda: FakeJwkClient(public))
-    import base64
-    import hashlib
-    import hmac
-    import json
 
     def part(data: bytes) -> str:
         return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
@@ -145,7 +145,77 @@ def test_a_token_cannot_switch_to_a_shared_secret_signed_with_the_public_key(mon
     signature = part(hmac.new(pem, f"{head}.{body}".encode(), hashlib.sha256).digest())
     with pytest.raises(review_auth.Refused) as e:
         review_auth.authenticate(f"Bearer {head}.{body}.{signature}", lookup)
-    assert e.value.reason == "invalid_token"
+    assert e.value.reason == "alg_not_allowed"
+
+
+def test_published_keys_work_even_with_an_old_secret_in_the_settings(monkeypatch):
+    # The bug Mon hit: a project on ES256 with SUPABASE_JWT_SECRET still set.
+    private, public = ec_keys()
+    monkeypatch.setattr(review_auth, "_jwk_client", lambda: FakeJwkClient(public))
+    good = jwt.encode(claims(aal="aal1"), private, algorithm="ES256")
+    monkeypatch.setattr(config, "REVIEW_REQUIRE_MFA", False)
+    assert review_auth.authenticate(f"Bearer {good}", lookup).name == "Ana"
+
+
+def test_es256_signed_by_another_key_is_refused(monkeypatch):
+    private, _ = ec_keys()
+    _, other_public = ec_keys()
+    monkeypatch.setattr(review_auth, "_jwk_client", lambda: FakeJwkClient(other_public))
+    with pytest.raises(review_auth.Refused) as e:
+        review_auth.authenticate(f"Bearer {jwt.encode(claims(), private, algorithm='ES256')}", lookup)
+    assert e.value.reason == "bad_signature"
+
+
+def test_with_a_secret_set_the_public_key_still_cannot_sign_hs256(monkeypatch):
+    _, public = ec_keys()
+    pem = public.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+    forged = jwt.api_jws.encode(json.dumps(claims()).encode(), "x" * 32, algorithm="HS256")
+    head, body, _ = forged.split(".")
+    signature = base64.urlsafe_b64encode(hmac.new(pem, f"{head}.{body}".encode(), hashlib.sha256).digest())
+    with pytest.raises(review_auth.Refused) as e:
+        review_auth.authenticate(f"Bearer {head}.{body}.{signature.rstrip(b'=').decode()}", lookup)
+    assert e.value.reason == "bad_signature"
+
+
+def test_an_algorithm_we_do_not_use_is_refused():
+    other = jwt.encode(claims(), SECRET, algorithm="HS512")
+    with pytest.raises(review_auth.Refused) as e:
+        review_auth.authenticate(f"Bearer {other}", lookup)
+    assert e.value.reason == "alg_not_allowed"
+
+
+class UnknownKidClient:
+    def get_signing_key_from_jwt(self, _token):
+        raise jwt.PyJWKClientError("no matching key")
+
+
+class DownClient:
+    def get_signing_key_from_jwt(self, _token):
+        raise jwt.PyJWKClientConnectionError("down")
+
+
+@pytest.mark.parametrize("client, status, reason", [
+    (UnknownKidClient(), 401, "no_matching_kid"),
+    (DownClient(), 503, "signing_keys_unavailable"),
+])
+def test_published_key_problems_have_their_own_reasons(monkeypatch, client, status, reason):
+    private, _ = ec_keys()
+    monkeypatch.setattr(review_auth, "_jwk_client", lambda: client)
+    with pytest.raises(review_auth.Refused) as e:
+        review_auth.authenticate(f"Bearer {jwt.encode(claims(), private, algorithm='ES256')}", lookup)
+    assert (e.value.status, e.value.reason) == (status, reason)
+
+
+def test_missing_crypto_package_is_named(monkeypatch):
+    private, _ = ec_keys()
+    monkeypatch.setattr(review_auth, "has_crypto", False)
+    with pytest.raises(review_auth.Refused) as e:
+        review_auth.authenticate(f"Bearer {jwt.encode(claims(), private, algorithm='ES256')}", lookup)
+    assert (e.value.status, e.value.reason) == (503, "missing_crypto_backend")
+
+
+def test_a_small_clock_difference_is_allowed():
+    assert review_auth.authenticate(f"Bearer {token(iat=int(time.time()) + 10)}", lookup).name == "Ana"
 
 
 def test_nothing_configured_is_refused_not_open(monkeypatch):

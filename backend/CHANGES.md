@@ -5,6 +5,19 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-10 - Review console: tokens signed with published keys
+
+**Bug found on the first real sign-in.** The project signs sessions with ES256,
+and `.env` also had the older `SUPABASE_JWT_SECRET`. `review_auth` used the
+secret whenever it was set, so every token was refused as `invalid_token`. Each
+token's own signing method now picks the key, with HS256 tied to the secret and
+RS256/ES256 tied to the published keys, so a public key can't be used as a
+shared secret. The log now gives a precise reason (`bad_signature`,
+`no_matching_kid`, `alg_not_allowed`, `bad_audience`, `bad_issuer`, ...), and a
+30-second clock difference is allowed.
+
+---
+
 ## 2026-11-10 - Review console: two-step sign-in is a setting
 
 **Decided by Mon.** The authenticator step wasn't asked for and was rejecting

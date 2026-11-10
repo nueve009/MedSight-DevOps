@@ -135,8 +135,8 @@ SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_ANON_KEY=<the project's public anon key>
 ```
 
-Add `SUPABASE_JWT_SECRET` only if the project still signs sessions with a
-shared secret; otherwise the console uses the project's published keys. Then:
+Leave out `SUPABASE_JWT_SECRET` unless the project still signs sessions with a
+shared secret; the console normally uses the project's published keys. Then:
 
 ```powershell
 python -m scripts.review_console
