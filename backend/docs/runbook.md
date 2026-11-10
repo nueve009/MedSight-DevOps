@@ -121,7 +121,7 @@ The audit export is kept as a record. It isn't loaded back. Rate counters and th
 
 In Supabase, never through admin routes. See `kb/README.md` for the full steps.
 
-1. Enter the rows from the box photos, the TheFilipinoDoctor page and the FDA portal (looked up by hand, never scraped): in the Table Editor, or `python -m scripts.kb_build --push --kb-dir <draft folder>`.
+1. Enter the rows from the box photos, the TheFilipinoDoctor page and the FDA portal (by hand, or drafted by the FDA lookup script and confirmed on the portal by the reviewer): in the Table Editor, or `python -m scripts.kb_build --push --kb-dir <draft folder>`.
 2. A second person checks every value, types their name in `checked_by` and sets `approved` to true.
 3. Within a minute `/health` shows the new `kb_version` and `kb_products`.
 4. `python -m scripts.kb_build --pull`, then `python -m scripts.eval_kb` must pass.

@@ -55,7 +55,8 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `scripts/benchmark_ocr.py` - OCR benchmarking
 - `scripts/sort_packaging_images.py` - Sorts dataset images into `sorted_output/`
 - `kb/` - Reviewed dataset of the supported medicines, sourced from
-  TheFilipinoDoctor and hand FDA-portal lookups (see `kb/README.md`)
+  TheFilipinoDoctor and FDA-portal lookups, by hand or by the team's
+  rate-limited lookup script (see `kb/README.md`)
 - `scripts/kb_build.py` - Validates `kb/` and builds `data/kb.sqlite`
 - `scripts/kb_draft_descriptions.py` - LLM drafts of spoken descriptions for the team to check
 - `scripts/eval_kb.py` - Runs the labeled scans; 0 wrong reviewed answers is the release gate

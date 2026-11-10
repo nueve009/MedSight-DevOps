@@ -5,6 +5,20 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-10 - FDA portal lookups may be scripted (docs only)
+
+**Decided by Mon.** The old rule "the FDA portal must not be scraped or
+automated" is replaced: a local script may draft the FDA values the dataset
+needs (`fda_reg_no`, `reg_expiry`, `classification`, `manufacturer`,
+`portal_checked_on`) for the products on the team's list only, at least 5 s
+between requests, with a clear user agent and cached results. Its output is a
+draft in `kb/staging/`; a reviewer still confirms each value on the portal
+before approving. Checked first: robots.txt allows every path and no terms of
+use were found. Updated `CLAUDE.md`, `kb/README.md`, `.agents/AGENTS.md` and
+`docs/runbook.md`. The comment in the applied `migrations/0005_kb_dataset.sql`
+still says "never scraped"; it is left as is because applied migrations are
+never edited. The script itself is not built yet.
+
 ## 2026-11-09 — Reviewed dataset in Supabase, approved row by row
 
 **Branch:** `backend/kb-in-supabase`. Asked by Mon: keep the dataset in

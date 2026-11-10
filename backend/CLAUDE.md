@@ -50,8 +50,24 @@ migration 0005); a second teammate approves each row in the Table Editor.
 `kb/` holds the same columns as CSVs (draft imports and a git copy), and
 `kb/README.md` explains how it's collected. **Never add, edit or approve
 rows in `kb/*.csv` or the `kb_*` tables yourself.** Every value must come from the team's box
-photos and FDA portal lookups. Use fake data in a temp folder for tests. The
-FDA portal must not be scraped or automated.
+photos, the TheFilipinoDoctor pages and FDA portal values. Use fake data in a
+temp folder for tests.
+
+**FDA portal lookups (rule changed by Mon, 2026-11-10).** A script may look up
+the FDA values the dataset needs (`fda_reg_no`, `reg_expiry`,
+`classification`, `manufacturer`, `portal_checked_on`) on
+https://verification.fda.gov.ph, within these limits:
+- only the products in the team's medicine list (about 30 brands), never a
+  crawl of the whole portal
+- at least 5 seconds between requests, a clear user agent, and results cached
+  in `kb/staging/` so each product is looked up once
+- run locally by the team, never from the deployed backend or at scan time
+- output goes to `kb/staging/` drafts, then into Supabase as unapproved rows;
+  a reviewer still confirms each value on the portal before approving
+- stop and report if the portal adds terms forbidding it, a login or a CAPTCHA
+
+Checked 2026-11-10: the portal's robots.txt allows every path, and no terms of
+use were found; the fda.gov.ph footer says "All Rights Reserved".
 
 **Tests** live in `tests/` (pytest). `tests/conftest.py` replaces
 `llm_client.chat` with a `FakeLLM` in every test (a test that doesn't set a

@@ -24,8 +24,10 @@ copy in git.
 **Sources (team decision, 2026-10-26):** TheFilipinoDoctor
 (`thefilipinodoctor.com`) is the text source, `source_type` `tfd`. MIMS isn't
 used (its drug directory needs an account). The box or insert (`box`,
-`insert`) is still accepted. **The FDA verification portal is always looked
-up by hand; never scrape or automate it.**
+`insert`) is still accepted. **FDA portal values** may be drafted by the
+team's FDA lookup script (within the limits in `CLAUDE.md`, decision
+2026-11-10) or looked up by hand. Either way, a reviewer confirms each value
+on the portal before approving.
 
 ## Workflow
 
@@ -35,8 +37,9 @@ up by hand; never scrape or automate it.**
    `tfd_missing.txt`; find their page or use the box.
 2. **Decide the scope.** Keep only the strengths and forms a user would scan
    at home: drop injections, inhalation solutions and hospital packs.
-3. **Look up each product on the FDA portal by hand**
-   (https://verification.fda.gov.ph). Search the registration number printed
+3. **Look up each product on the FDA portal**
+   (https://verification.fda.gov.ph), by hand or drafted into `staging/` by
+   the FDA lookup script. Search the registration number printed
    on the box ("Reg. No." / "FDA Reg. No.", e.g. `DR-XY12345`) and take a
    screenshot. Fill in `fda_reg_no`, `reg_expiry`, `classification` (OTC/Rx,
    **from the portal, not the website**) and `portal_checked_on`. If it isn't
