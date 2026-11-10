@@ -5,6 +5,58 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-09 — Reviewed dataset in Supabase, approved row by row
+
+**Branch:** `backend/kb-in-supabase`. Asked by Mon: keep the dataset in
+Supabase and read it from there, and let the team approve rows in Supabase.
+
+**Why:** `data/kb.sqlite` is git-ignored and the Dockerfile never built it,
+so a Railway deploy had an empty reviewed dataset (the runbook said Railway
+runs `kb_build.py`; it didn't). Approving in the Table Editor also replaces
+typing `checked_by` into a CSV.
+
+**Added**
+- `migrations/0005_kb_dataset.sql`: `kb_ingredients`, `kb_products`,
+  `kb_passages` (the CSV columns plus `approved`, `approved_at`,
+  `review_note`, timestamps) and `kb_review_log`.
+  - Trigger `kb_review_guard`: rows are added unapproved; approving needs
+    `checked_by` different from `entered_by` and the dataset rules (dose
+    patterns, 300 characters, strengths per ingredient, classification,
+    unexpired registration, known ingredients, tfd URL); an edit and its
+    approval can't be one save; editing an approved row un-approves it and
+    clears the checker. Every change is logged with `kb_review_log`.
+  - RLS on; `medsight_backend` gets SELECT with a policy `USING (approved)`;
+    `anon`/`authenticated` get nothing.
+- `app/kb_validate.py`: the row rules, moved out of `scripts/kb_build.py`
+  so the server can use them; `servable()` drops broken approved rows and
+  everything that depends on them.
+- `app/kb_source.py`: reads approved rows in one read-only snapshot,
+  `KBRefresher` reloads every `KB_REFRESH_S` (60) and keeps the old dataset
+  on failure.
+- `KB_BACKEND` (default `CACHE_BACKEND`), `KB_DATABASE_URL`, `KB_REFRESH_S`,
+  `KB_ADMIN_DATABASE_URL`.
+- `kb_build --push` (CSV drafts into Supabase, unapproved, upsert by key,
+  checker columns never written, unchanged rows untouched) and `--pull`
+  (approved rows into `data/kb.sqlite`, optionally CSVs).
+- `tests/test_kb_supabase.py`.
+
+**Changed**
+- Ingredient rule: a names-only ingredient may now have `entered_by` and
+  `checked_by` filled (every Supabase row has them); the description fields
+  are required once `spoken_description` or `source_url` is filled.
+- "has no indications passage" is reported on the product's line, not on
+  `passages.csv`.
+
+**Not done / open**
+- Supabase records the database owner for every Table Editor change, so
+  `checked_by` is a typed name, not a verified identity. A review page with
+  per-person keys would fix that if the team needs it.
+- No pgvector: matching is exact and fuzzy names on about 30 products held
+  in memory; nothing to embed.
+- The FTS `search` table exists only in the local `kb.sqlite`.
+
+---
+
 ## 2026-11-04 — M7: admin routes, audit log, failure drills, runbook
 
 **Branch:** `backend/m7-admin-runbook`, on top of `backend/m6-web-tier`.

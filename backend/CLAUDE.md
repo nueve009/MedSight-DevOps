@@ -27,6 +27,8 @@ python -m scripts.benchmark_ocr <dataset_root>            # dataset path is requ
 python -m scripts.sort_packaging_images <dataset_root> <output_dir> [--min-text-regions 3]
 python -m scripts.kb_build --check [--kb-dir <folder>]    # validate the reviewed dataset in kb/
 python -m scripts.kb_build                                # validate + build data/kb.sqlite
+python -m scripts.kb_build --push --kb-dir <folder>       # import CSV drafts into Supabase, unapproved (KB_ADMIN_DATABASE_URL)
+python -m scripts.kb_build --pull [--csv-out kb]          # approved Supabase rows -> data/kb.sqlite (+ CSVs)
 python -m scripts.kb_draft_descriptions                   # LLM drafts of spoken descriptions -> kb/staging/
 python -m scripts.eval_kb [--out report.json]             # labeled scans; exit 1 on any wrong reviewed answer
 python -m scripts.kb_make_scans sorted_output/packaging   # draft eval scans from images
@@ -42,9 +44,12 @@ tool and **is never committed**: stage files by explicit path, and exclude
 it from lint (`ruff check . --exclude scripts/tfd_scrape.py --exclude
 tests/test_tfd_scrape.py`).
 
-`kb/` holds the hand-curated, two-person-checked ("reviewed") dataset of the
-supported medicines. `kb/README.md` explains how it's collected. **Never add or edit
-rows in `kb/*.csv` yourself.** Every value must come from the team's box
+The hand-curated, two-person-checked ("reviewed") dataset of the supported
+medicines lives in Supabase (`kb_ingredients`, `kb_products`, `kb_passages`,
+migration 0005); a second teammate approves each row in the Table Editor.
+`kb/` holds the same columns as CSVs (draft imports and a git copy), and
+`kb/README.md` explains how it's collected. **Never add, edit or approve
+rows in `kb/*.csv` or the `kb_*` tables yourself.** Every value must come from the team's box
 photos and FDA portal lookups. Use fake data in a temp folder for tests. The
 FDA portal must not be scraped or automated.
 
@@ -87,8 +92,16 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    mentions). From attempt `MAX_SCAN_ATTEMPTS` a rescan becomes `gave_up`.
    An answer is `ok_caveat` when the phone's OCR confidence is below
    `OCR_CAVEAT_THRESHOLD` (`None` = skipped, not 0).
-4b. **Dataset match** (`retrieval.KnowledgeBase.match`, loaded once from
-   `data/kb.sqlite` into `app.state.kb`; a missing file = empty dataset).
+4b. **Dataset match** (`retrieval.KnowledgeBase.match`, on `app.state.kb`).
+   `KB_BACKEND` (default: `CACHE_BACKEND`) picks the source: `sqlite` loads
+   `data/kb.sqlite` once (missing file = empty dataset); `postgres`
+   (`app/kb_source.py`) reads the approved `kb_*` rows at startup and every
+   `KB_REFRESH_S` in a background thread (`KBRefresher`), re-checks them with
+   `app/kb_validate.py` (a row that breaks a rule, and rows that need it, are
+   dropped and logged), and swaps the new dataset in only when its version
+   changes. A failed load keeps the current dataset. The database trigger
+   `kb_review_guard` enforces the approval rules (two people, rules pass,
+   edits un-approve); the backend role sees approved rows only (RLS).
    `reviewed`: exact brand or alias (or fuzzy brand ≥0.85) **and** the same
    ingredient set and strengths, after synonyms (`name_key`, `brand_key`,
    `normalize_strength`) → spoken with the dataset's spelling, its

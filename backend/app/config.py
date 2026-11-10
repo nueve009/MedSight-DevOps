@@ -22,8 +22,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # survive redeploys.
 DATA_DIR = Path(os.environ.get("MEDSIGHT_DATA_DIR", BASE_DIR / "data"))
 CACHE_DB_PATH = DATA_DIR / "cache.sqlite"
-# Verified medicine dataset: hand-curated CSVs in kb/, built into kb.sqlite
-# by kb_build.py.
+# Reviewed medicine dataset: CSVs in kb/, built into kb.sqlite by kb_build.py
+# (local runs, tests, eval). On Railway it comes from Supabase (KB_BACKEND).
 KB_DIR = BASE_DIR / "kb"
 KB_DB_PATH = DATA_DIR / "kb.sqlite"
 LOGS_DIR = Path(os.environ.get("MEDSIGHT_LOGS_DIR", BASE_DIR / "logs"))
@@ -51,6 +51,16 @@ DB_SKIP_AFTER_FAILURE_S = float(os.environ.get("DB_SKIP_AFTER_FAILURE_S", "60"))
 DB_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "5"))
 WEB_ANSWER_TTL_DAYS = 30            # web answers stop being served after this (decided 2026-10-19)
 SCAN_LOG_OCR_RETENTION_DAYS = 30    # OCR text is cleared from scan_log after this (privacy, plan section 7 #9)
+
+# --- Reviewed dataset source (app/retrieval.py, app/kb_source.py) ---
+# "sqlite": data/kb.sqlite, built from kb/ by scripts/kb_build.py.
+# "postgres": the approved rows of the kb_* tables in Supabase
+# (migrations/0005_kb_dataset.sql), re-read every KB_REFRESH_S seconds.
+# Defaults to CACHE_BACKEND, so a Supabase deploy reads the dataset from Supabase too.
+KB_BACKEND = os.environ.get("KB_BACKEND", CACHE_BACKEND).lower()
+# Connection for reading the dataset; empty = DATABASE_URL (the backend role, which can only read approved rows).
+KB_DATABASE_URL = os.environ.get("KB_DATABASE_URL", "")
+KB_REFRESH_S = float(os.environ.get("KB_REFRESH_S", "60"))
 
 # --- Rate limits and the daily LLM budget (app/ratelimit.py) ---
 # Per device (X-Device-Id, hashed) and per client address, in fixed UTC

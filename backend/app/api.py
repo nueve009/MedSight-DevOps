@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app import admin, config, speech
+from app.kb_source import KBRefresher, kb_conninfo, load_from_postgres
 from app.llm_client import LLMUnavailableError
 from app.logging_setup import RequestIdMiddleware, configure_logging, request_id_var
 from app.pipeline import ScanRequest, identify, identify_scan
@@ -50,13 +51,35 @@ async def lifespan(app: FastAPI):
     app.state.cache = make_store()
     app.state.limiter = Limiter(app.state.cache)
     app.state.scan_slots = threading.BoundedSemaphore(config.MAX_CONCURRENT_SCANS)
-    # The reviewed dataset, built into data/kb.sqlite by scripts/kb_build.py at deploy time.
-    app.state.kb = KnowledgeBase.load(config.KB_DB_PATH)
+    # The reviewed dataset: approved rows in Supabase (re-read in the background),
+    # or data/kb.sqlite built by scripts/kb_build.py (KB_BACKEND).
+    refresher = start_kb(app.state)
     log.info("startup", extra={"fields": {"llm_provider": config.LLM_PROVIDER, "kb_version": app.state.kb.version,
                                           "kb_products": len(app.state.kb.products),
-                                          "cache_backend": config.CACHE_BACKEND}})
+                                          "cache_backend": config.CACHE_BACKEND, "kb_backend": config.KB_BACKEND}})
     yield
+    if refresher:
+        refresher.stop()
     app.state.cache.close()
+
+
+def start_kb(state) -> Optional[KBRefresher]:
+    """Put the reviewed dataset in state.kb; for Supabase, also start its refresher."""
+    backend = config.KB_BACKEND
+    if backend == "sqlite":
+        state.kb = KnowledgeBase.load(config.KB_DB_PATH)
+        return None
+    if backend != "postgres":
+        raise RuntimeError(f"KB_BACKEND must be 'sqlite' or 'postgres', not {backend!r}")
+    conninfo = kb_conninfo()
+    if not conninfo:
+        # A configuration mistake, not an outage: refuse to start.
+        raise RuntimeError("KB_BACKEND=postgres needs KB_DATABASE_URL or DATABASE_URL")
+    state.kb = KnowledgeBase()
+    refresher = KBRefresher(state, lambda: load_from_postgres(conninfo), config.KB_REFRESH_S)
+    refresher.load_once()   # a failure is logged; scans run on the empty dataset until a reload works
+    refresher.start()
+    return refresher
 
 
 class BodySizeLimitMiddleware:
