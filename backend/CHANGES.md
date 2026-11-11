@@ -5,6 +5,143 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-10 - Import staging drafts as pending rows
+
+**Asked by Mon:** move the drafts in `kb/staging/` into Supabase for review in
+the console. `scripts/kb_import_staging.py --by NAME` maps them and writes
+`kb/staging/import/*.csv`. `--push` adds them as pending rows.
+
+**Decisions**
+- `validate_rows(unfinished=True)` lets a draft leave its FDA values, spoken
+  description and PNF answer empty. Nothing else about the rules changed.
+- `kb_build.push(drafts=True)` skips rows that were approved, sent back or
+  edited in the console, and doesn't write the columns reviewers fill in. A plain
+  `push` would un-approve changed rows and blank FDA values already picked.
+- `pnf_listed` isn't in the drafts and the column can't hold "unknown", so new
+  ingredients get its default, `no`.
+- An ingredient drawn from two pages keeps one `source_url`, because the API
+  returns the value as it is. The summary lists the other link.
+
+**Checked:** tests, including the real SQL on a throwaway local Postgres 18, and
+a run without `--push` on the real staging files.
+
+**Not checked:** `--push` against Supabase, which Mon runs. An edit made in the
+Table Editor records no editor, so a later import can still update that row's
+draft text (never its FDA values).
+
+---
+
+## 2026-11-10 - Review console: tokens signed with published keys
+
+**Bug found on the first real sign-in.** The project signs sessions with ES256,
+and `.env` also had the older `SUPABASE_JWT_SECRET`. `review_auth` used the
+secret whenever it was set, so every token was refused as `invalid_token`. Each
+token's own signing method now picks the key, with HS256 tied to the secret and
+RS256/ES256 tied to the published keys, so a public key can't be used as a
+shared secret. The log now gives a precise reason (`bad_signature`,
+`no_matching_kid`, `alg_not_allowed`, `bad_audience`, `bad_issuer`, ...), and a
+30-second clock difference is allowed.
+
+---
+
+## 2026-11-10 - Review console: two-step sign-in is a setting
+
+**Decided by Mon.** The authenticator step wasn't asked for and was rejecting
+sign-ins during setup. `REVIEW_REQUIRE_MFA` now controls it: on by default, so a
+hosted console stays strict, and off in `scripts/review_console.py` unless given
+`--require-mfa`. Everything else is still checked. The page is told which mode
+to use. Storage rules are pasted by hand (`kb/README.md`, "Two-step sign-in
+setting"), since applied migrations are never edited. Turning it back on before
+hosting is on the checklist in `docs/runbook.md`.
+
+---
+
+## 2026-11-10 - Review console, phase 1 (runs locally)
+
+**Asked by Mon:** a web tool for the reviewers that can update the dataset
+without a deploy. Approvals go to Supabase and the deployed backend serves them
+within `KB_REFRESH_S`.
+
+**Added**
+- `migrations/0006_review_console.sql` (**not yet run**): `reviewers`,
+  `kb_reviews` (append-only), `kb_evidence`, `kb_fda_lookups`, `kb_settings`,
+  `review_state` and `last_edited_by`, role `medsight_review`. The Storage
+  bucket is a commented block to run by hand, because Storage tables exist only
+  in a Supabase project.
+- `scripts/fda_lookup.py --push --by NAME`: draft rows into `kb_fda_lookups`.
+- `app/review_auth.py`, `app/review_store.py`, `app/review.py`: the API.
+- `review/` (plain HTML and JavaScript, no outside code) and
+  `scripts/review_console.py`: `python -m scripts.review_console` on 127.0.0.1:8100.
+- `PyJWT[crypto]` and `python-multipart` in `requirements.txt`.
+
+**Decisions**
+- The approval sends the `updated_at` of the row the reviewer read, so a row
+  edited in between is refused rather than approved unseen.
+- A draft may leave its FDA values and description empty (they often come later
+  from a candidate); approving needs them all.
+- Every reviewer may edit any row. Editing makes you its last editor, so you
+  can't approve it.
+- `0006` has no `schema_version` insert: `scripts/migrate.py` records every file.
+- No `Pillow` in the requirements, so uploads are checked by their first bytes
+  and not re-encoded. Photo metadata stays in the file.
+- `kb_is_review_role()` checks real membership, not `pg_has_role`, so a superuser
+  can't pass as the review role once Table Editor approval is off.
+
+**Checked:** 0006 and the store on a throwaway local Postgres 18, as the review
+role. The page was clicked through in a browser against that database, with a
+stand-in for Supabase Auth: sign-in, two-factor, queue, row page, approve. An
+HTML injection attempt in a row showed as plain text.
+
+**Not checked:** real Supabase Auth, Storage and its policies, and first-time
+two-factor enrolment on a real project; none of those can be tested locally.
+The Vercel hosting is prepared (`review/vercel.json`, `config.example.js`) but
+not deployed. `vercel.json` has placeholder hosts to replace.
+
+---
+
+## 2026-11-10 - Web answers say "prescription" when the page does
+
+**Asked by Mon:** a prescription medicine outside the reviewed list should
+still be stated as one if the search results say so. A web answer now adds
+"According to <site>, this is a prescription medicine." after the web warning,
+and `product.prescription` is true. Both the model and the chosen page's own
+wording must agree (`web_search.page_states_rx`); a page that also says
+non-prescription or OTC doesn't count. Stored as `rx` in the answer's
+`product` JSON, so no migration, and web answers cached before this keep no
+prescription line until they expire. The ingredient and general tiers are
+unchanged: nothing there comes from a source that states it. The scan log's
+`web_rx` is `yes`, `no` or `model_only` (the model said so but the page's
+wording didn't). It works only with the web tier on
+(`WEB_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY`). The sentence is
+new spoken wording, so it still needs the team's approval and a listen on the
+phone's text-to-speech (`speech.py`).
+
+---
+
+## 2026-11-10 - FDA portal lookups may be scripted (docs only)
+
+**Decided by Mon.** The old rule "the FDA portal must not be scraped or
+automated" is replaced: a local script may draft the FDA values the dataset
+needs (`fda_reg_no`, `reg_expiry`, `classification`, `manufacturer`,
+`portal_checked_on`) for the products on the team's list only, at least 5 s
+between requests, with a clear user agent and cached results. Its output is a
+draft in `kb/staging/`; a reviewer still confirms each value on the portal
+before approving. Checked first: robots.txt allows every path and no terms of
+use were found. Updated `CLAUDE.md`, `kb/README.md`, `.agents/AGENTS.md` and
+`docs/runbook.md`. The comment in the applied `migrations/0005_kb_dataset.sql`
+still says "never scraped"; it is left as is because applied migrations are
+never edited.
+
+Built the same day: `scripts/fda_lookup.py` (tests in
+`tests/test_fda_lookup.py`). It calls the portal's own search,
+`GET /api/search?q=<brand>`, and reads the Drug CPR results (`cdrr`). It looks
+up only the team's list (`staging/brands.txt` plus `tfd_products_draft.csv`),
+waits at least 5 s between requests, caches each reply in `staging/fda_cache/`
+and stops on HTTP 401, 403, 419 or 429, a redirect, or anything that isn't the
+expected JSON. It writes every registration for a brand to
+`staging/fda_lookup_draft.csv` without picking one; the reviewer picks by the
+number on the box and confirms it on the portal.
+
 ## 2026-11-09 — Reviewed dataset in Supabase, approved row by row
 
 **Branch:** `backend/kb-in-supabase`. Asked by Mon: keep the dataset in

@@ -125,6 +125,12 @@ as `X-Admin-Key`. App keys never work here.
 | `DELETE /admin/answers/{cache_key}` | Removes it; the next scan answers afresh |
 | `GET /admin/audit?limit=` | Every admin write, newest first: who, what, before, after |
 
+The review console's routes (`/admin/kb/...` and `/admin/review/stats`, listed
+at the top of `app/review.py`) sit behind the same `ADMIN_ENABLED` switch but
+use a reviewer's Supabase sign-in (`Authorization: Bearer`; two-step via `REVIEW_REQUIRE_MFA`),
+not `X-Admin-Key`. The mobile app never calls them. Run them locally with
+`python -m scripts.review_console`; see `kb/README.md`.
+
 Every write and its audit row are saved together. A database outage gives a
 503 with nothing changed. `docs/runbook.md` has the step-by-step for a bad
 answer.
@@ -229,8 +235,12 @@ Response (200):
   For `reviewed` answers, `product` holds the dataset's spelling (not the
   OCR's), `sources` the source page URLs, and `product.prescription` is true
   for prescription products, which are also spoken with "This is a
-  prescription medicine." `cache` is `null` for `reviewed` and `ingredient`
-  answers (they come from the dataset, not the cache).
+  prescription medicine." For a `web` answer, `product.prescription` is true
+  only when the source page says so; it is spoken after the web warning as
+  "According to <site>, this is a prescription medicine." It is always false
+  for `ingredient` and `general`, which means "not stated", not "doesn't need
+  a prescription". `cache` is `null` for `reviewed` and `ingredient` answers
+  (they come from the dataset, not the cache).
 
 Other responses (both versions):
 - **401:** missing or wrong API key.

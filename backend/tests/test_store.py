@@ -26,9 +26,11 @@ def _reset_postgres() -> None:
     import psycopg
     with psycopg.connect(PG_URL, sslmode=PG_SSLMODE, autocommit=True) as conn:
         conn.execute("DROP TABLE IF EXISTS parses, answers, scan_log, rate_limits, audit_log, schema_version, "
-                     "kb_passages, kb_products, kb_ingredients, kb_review_log CASCADE")
+                     "kb_passages, kb_products, kb_ingredients, kb_review_log, reviewers, kb_settings, "
+                     "kb_reviews, kb_evidence, kb_fda_lookups CASCADE")
         conn.execute("DROP FUNCTION IF EXISTS kb_contains_dosing, kb_split, kb_check_spoken, kb_check_approvable, "
-                     "kb_content, kb_review_guard, kb_review_audit CASCADE")
+                     "kb_content, kb_review_guard, kb_review_audit, kb_is_review_role, kb_reviews_append_only, "
+                     "kb_delete_unapproved CASCADE")
         conn.execute(migrate._BOOTSTRAP)
         for version, path in migrate.migration_files():
             conn.execute(path.read_text(encoding="utf-8"))

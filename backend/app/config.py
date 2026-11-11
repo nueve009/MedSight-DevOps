@@ -122,6 +122,21 @@ API_DOCS = os.environ.get("API_DOCS", "off").strip().lower() in ("1", "on", "tru
 # person, as "name=key,name=key" (the name goes in the audit log, the key never).
 ADMIN_ENABLED = os.environ.get("ADMIN_ENABLED", "off").strip().lower() in ("1", "on", "true", "yes")
 ADMIN_KEYS = os.environ.get("ADMIN_KEYS", "")
+# Review console (app/review.py): connects as the medsight_review login, signs
+# reviewers in through Supabase Auth, and is gated by ADMIN_ENABLED like /admin.
+REVIEW_DATABASE_URL = os.environ.get("REVIEW_DATABASE_URL", "")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")   # public: it goes to the page
+# Set for a project with a shared HS256 secret; empty = verify with the project's published keys (JWKS).
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+# Comma-separated origins allowed to call the API from a browser (the hosted page). Empty = none.
+REVIEW_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("REVIEW_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+# Two-step sign-in (an authenticator code). On unless switched off, so a hosted console stays strict;
+# scripts/review_console.py turns it off for its own process unless given --require-mfa.
+REVIEW_REQUIRE_MFA = os.environ.get("REVIEW_REQUIRE_MFA", "on").strip().lower() in ("1", "on", "true", "yes")
+EVIDENCE_BUCKET = "kb-evidence"
+MAX_EVIDENCE_BYTES = 5 * 1024 * 1024
+MAX_EVIDENCE_BODY_BYTES = MAX_EVIDENCE_BYTES + 64 * 1024   # the file plus the multipart wrapping
 MAX_BODY_BYTES = 64 * 1024     # whole request body; larger gets 413
 MAX_OCR_TEXT_CHARS = 5000      # request validation; longer gets 422
 MAX_BLOCKS = 500               # text blocks per request; more gets 422

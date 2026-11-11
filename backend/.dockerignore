@@ -7,3 +7,5 @@ __pycache__/
 .env.*
 *.sqlite
 tests/
+review/
+kb/staging/

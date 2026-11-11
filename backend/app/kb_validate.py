@@ -29,6 +29,9 @@ INGREDIENT_DESCRIPTION_FIELDS = {"spoken_description", "source_url", "entered_by
 OPTIONAL_INGREDIENT_FIELDS = {"synonyms", "pnf_forms", "pnf_page"} | INGREDIENT_DESCRIPTION_FIELDS
 # Filled in by the checker when they approve, so a draft waiting for review may leave them empty.
 CHECKER_FIELDS = {"checked_by", "description_checked_by"}
+# Filled in during review (FDA candidates, the checked sentence), so a row
+# imported from kb/staging/ may arrive without them. Approving still needs them.
+UNFINISHED_PRODUCT_FIELDS = {"classification", "fda_reg_no", "reg_expiry", "portal_checked_on", "spoken_description"}
 
 CLASSIFICATIONS = {"OTC", "Rx", "HR"}  # over-the-counter, prescription, household remedy
 SECTIONS = {"indications", "warnings"}
@@ -85,23 +88,27 @@ class Validator:
 
 
 def validate_rows(products: Rows, ingredients: Rows, passages: Rows, v: Validator | None = None,
-                  allow_empty: bool = False, for_review: bool = False) -> Validator:
+                  allow_empty: bool = False, for_review: bool = False, unfinished: bool = False) -> Validator:
     """Check the rows; errors and warnings are added to v (a new Validator if None).
 
     for_review: the rows are drafts going to Supabase for a teammate to check,
     so the checker's columns may still be empty (they're filled when approving).
+    unfinished: with for_review, the FDA values, spoken description and PNF
+    answer may be empty too (scripts/kb_import_staging.py). Whatever is filled
+    is still checked.
     """
     v = v or Validator()
     checker_optional = CHECKER_FIELDS if for_review else set()
+    unfinished_optional = UNFINISHED_PRODUCT_FIELDS if unfinished else set()
     description_fields = INGREDIENT_DESCRIPTION_FIELDS - checker_optional
 
     # --- ingredients ---
     known_generics: dict[str, str] = {}  # lowercased name or synonym -> generic_name
     for where, row in ingredients:
-        v.require(where, row, OPTIONAL_INGREDIENT_FIELDS)
+        v.require(where, row, OPTIONAL_INGREDIENT_FIELDS | ({"pnf_listed"} if unfinished else set()))
         if for_review and not row["entered_by"]:
             v.error(where, "'entered_by' is empty; Supabase needs who entered every row")
-        if row["pnf_listed"] not in ("yes", "no"):
+        if row["pnf_listed"] not in ("yes", "no") and (row["pnf_listed"] or not unfinished):
             v.error(where, "'pnf_listed' must be 'yes' or 'no'")
         if row["pnf_listed"] == "yes" and not row["pnf_page"]:
             v.warn(where, "listed in the PNF but 'pnf_page' is empty")
@@ -126,7 +133,7 @@ def validate_rows(products: Rows, ingredients: Rows, passages: Rows, v: Validato
     product_where: dict[str, str] = {}
     reg_nos: set[str] = set()
     for where, row in products:
-        v.require(where, row, OPTIONAL_PRODUCT_FIELDS | checker_optional)
+        v.require(where, row, OPTIONAL_PRODUCT_FIELDS | checker_optional | unfinished_optional)
         pid = row["product_id"]
         if pid and not ID_RE.match(pid):
             v.error(where, f"product_id '{pid}' must be lowercase letters, digits and dashes")
@@ -137,7 +144,7 @@ def validate_rows(products: Rows, ingredients: Rows, passages: Rows, v: Validato
         if row["classification"] and row["classification"] not in CLASSIFICATIONS:
             v.error(where, f"'classification' must be one of {sorted(CLASSIFICATIONS)}")
         reg_no = row["fda_reg_no"]
-        if reg_no in reg_nos:
+        if reg_no and reg_no in reg_nos:
             v.error(where, f"duplicate fda_reg_no '{reg_no}'")
         reg_nos.add(reg_no)
         if reg_no and not REG_NO_RE.match(reg_no):

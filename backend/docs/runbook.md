@@ -84,7 +84,7 @@ Web answers are spoken right away, after the web warning, and wait for review as
    ```powershell
    curl.exe -H "X-Admin-Key: <admin key>" "<url>/admin/answers?status=pending_review"
    ```
-2. Open each source URL. Check that the page supports every claim in the description, and that nothing in it says how much to take.
+2. Open each source URL. Check that the page supports every claim in the description, and that nothing in it says how much to take. If `product.rx` is `true`, the app is telling users the page says this is a prescription medicine, so check that the page really says that for this strength and form.
 3. Mark each one approved (`{"status": "active"}`) or rejected (`{"status": "rejected"}`), using the same PATCH as above. An approved web answer is still spoken with the web warning.
 
 Web answers expire after 30 days either way.
@@ -121,11 +121,31 @@ The audit export is kept as a record. It isn't loaded back. Rate counters and th
 
 In Supabase, never through admin routes. See `kb/README.md` for the full steps.
 
-1. Enter the rows from the box photos, the TheFilipinoDoctor page and the FDA portal (looked up by hand, never scraped): in the Table Editor, or `python -m scripts.kb_build --push --kb-dir <draft folder>`.
+1. Enter the rows from the box photos, the TheFilipinoDoctor page and the FDA portal (by hand, or drafted by the FDA lookup script and confirmed on the portal by the reviewer): in the Table Editor, or `python -m scripts.kb_build --push --kb-dir <draft folder>`.
 2. A second person checks every value, types their name in `checked_by` and sets `approved` to true.
 3. Within a minute `/health` shows the new `kb_version` and `kb_products`.
 4. `python -m scripts.kb_build --pull`, then `python -m scripts.eval_kb` must pass.
 5. To take a row off the air at once, set its `approved` to false.
+
+### Using the review console
+
+The console approves rows from a laptop with no deploy: `python -m scripts.review_console`, then http://127.0.0.1:8100/review/. Setup and rules are in `kb/README.md`, "Reviewing in the console".
+
+| Problem | What to do |
+|---|---|
+| "This account can't use the review console" | The account isn't in `reviewers`, or `active` is false. |
+| "Enter your two-factor code first" | Only with two-step sign-in on. The session didn't finish the code step. Sign out and sign in again. |
+| Lost authenticator | In Supabase, Authentication, Users, remove that user's MFA factor. They set it up again at next sign-in. |
+| Someone leaves the team | `UPDATE reviewers SET active = false WHERE name = '<name>';` and delete their Supabase user. |
+| The login may have leaked | `ALTER ROLE medsight_review_app PASSWORD '<new>';` and update each laptop's `REVIEW_DATABASE_URL`. |
+| An approved row isn't being spoken | Check that its ingredients and an `indications` passage are approved too. The backend's log lists rows it dropped. |
+
+Table Editor approval stays on as a fallback until `kb_settings.allow_table_editor_approval` is set to false.
+
+**Before the console is hosted (Vercel or anywhere else):**
+- [ ] Leave `REVIEW_REQUIRE_MFA` on for the hosted service (the default). The local launcher's "off" applies only to its own process.
+- [ ] Run storage variant (b) in `kb/README.md`, "Two-step sign-in setting".
+- [ ] Have every reviewer sign in once to set up an authenticator app.
 
 ## 7. A provider is down
 

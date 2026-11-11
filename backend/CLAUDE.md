@@ -35,6 +35,10 @@ python -m scripts.kb_make_scans sorted_output/packaging   # draft eval scans fro
 python -m scripts.migrate [--check]                       # apply migrations/ to Supabase (MIGRATION_DATABASE_URL)
 python -m scripts.store_admin export --out <dir> | restore <file> | purge   # nightly backup and cleanup
 python -m scripts.smoke_test --url <base url>              # after a deploy; key in SMOKE_API_KEY
+python -m scripts.fda_lookup [--brands "A,B"] [--refresh]  # FDA drafts -> kb/staging/ (rate-limited, team's list only)
+python -m scripts.fda_lookup --push --by NAME              # drafts -> kb_fda_lookups candidates (owner connection)
+python -m scripts.kb_import_staging --by NAME [--push]     # kb/staging/ drafts -> import/*.csv; --push adds them as pending rows
+python -m scripts.review_console                           # review console at http://127.0.0.1:8100/review/
 ```
 
 `kb/staging/` (git-ignored) holds the team's raw scraper output and the
@@ -50,8 +54,24 @@ migration 0005); a second teammate approves each row in the Table Editor.
 `kb/` holds the same columns as CSVs (draft imports and a git copy), and
 `kb/README.md` explains how it's collected. **Never add, edit or approve
 rows in `kb/*.csv` or the `kb_*` tables yourself.** Every value must come from the team's box
-photos and FDA portal lookups. Use fake data in a temp folder for tests. The
-FDA portal must not be scraped or automated.
+photos, the TheFilipinoDoctor pages and FDA portal values. Use fake data in a
+temp folder for tests.
+
+**FDA portal lookups (rule changed by Mon, 2026-11-10).** A script may look up
+the FDA values the dataset needs (`fda_reg_no`, `reg_expiry`,
+`classification`, `manufacturer`, `portal_checked_on`) on
+https://verification.fda.gov.ph, within these limits:
+- only the products in the team's medicine list (about 30 brands), never a
+  crawl of the whole portal
+- at least 5 seconds between requests, a clear user agent, and results cached
+  in `kb/staging/` so each product is looked up once
+- run locally by the team, never from the deployed backend or at scan time
+- output goes to `kb/staging/` drafts, then into Supabase as unapproved rows;
+  a reviewer still confirms each value on the portal before approving
+- stop and report if the portal adds terms forbidding it, a login or a CAPTCHA
+
+Checked 2026-11-10: the portal's robots.txt allows every path, and no terms of
+use were found; the fda.gov.ph footer says "All Rights Reserved".
 
 **Tests** live in `tests/` (pytest). `tests/conftest.py` replaces
 `llm_client.chat` with a `FakeLLM` in every test (a test that doesn't set a
@@ -130,6 +150,10 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    - Found: cached as `web` / `pending_review` (30-day expiry) and spoken as
      "According to <site>, ...". Not found or a failed gate: a "not found" marker,
      then the general tier. A search outage caches nothing.
+   - Prescription (2026-11-10): `WebAnswer.rx` needs the model's `prescription: true`
+     **and** the chosen page's own wording (`page_states_rx`). It is stored as
+     `rx` in the answer's `product` JSON and spoken after the web warning,
+     attributed to the site. The ingredient and general tiers never say it.
    - The server never fetches pages itself: the text comes from the provider.
    - `tests/conftest.py` replaces `web_search.search` with `FakeSearch`.
 6. **Describe** (`description_agent.get_description`, the `general` tier),
@@ -197,6 +221,26 @@ and description only) and delete cached answers, and read `audit_log`.
 - The tier can't be changed, so admins can never set "reviewed".
 - `tests/test_drills.py` holds the failure drills; `docs/runbook.md` the manual
   steps.
+
+**Review console** (`app/review.py`, `app/review_auth.py`, `app/review_store.py`,
+`review/`, `scripts/review_console.py`, migration 0006): the team's page for
+checking and approving `kb_*` rows. Approvals go straight to Supabase, so the
+deployed backend serves them within `KB_REFRESH_S` with no deploy.
+- Sign-in is a Supabase access token: signature, expiry, audience, not
+  anonymous, active in `reviewers`, and `aal2` when `REVIEW_REQUIRE_MFA` is on
+  (the default; the local launcher turns it off). The name from that table is the
+  actor; a name in a request body is never read.
+- It connects as `medsight_review`. The database repeats the key rules
+  (`kb_review_guard`, `kb_check_approvable`), so the app can't approve what they
+  refuse. `kb_reviews` is append-only.
+- Tables come only from `review_store.TABLES`. Don't add a route that takes a
+  table or column name any other way.
+- `review/review.js` shows server values with `textContent` only; a test fails on
+  `innerHTML`.
+- The launcher serves only the console (no scan routes) and listens on
+  127.0.0.1 unless `--host` is passed.
+- Tests: `tests/test_review_routes.py` uses a fake store; `test_review_store.py`
+  and `test_review_migration.py` need `MEDSIGHT_TEST_DATABASE_URL`.
 
 **Auth** (`api.require_api_key`): checks the `X-API-Key` header against
 `MEDSIGHT_API_KEY` using a constant-time comparison. If the server key isn't

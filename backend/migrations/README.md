@@ -12,6 +12,7 @@ change is a new, higher-numbered file.
 | `0003_rate_limits.sql` | `rate_limits` counters (hashed buckets), same grants and RLS |
 | `0004_audit_log.sql` | `audit_log` of admin writes; the backend role can only read and add rows |
 | `0005_kb_dataset.sql` | the reviewed dataset (`kb_ingredients`, `kb_products`, `kb_passages`), approved row by row in the Table Editor; `kb_review_log`. The backend role can read approved rows only |
+| `0006_review_console.sql` | **Not yet run.** The review console: `reviewers`, `kb_reviews` (append-only), `kb_evidence`, `kb_fda_lookups`, `kb_settings`, `review_state` and `last_edited_by` on the `kb_*` tables, and the `medsight_review` role. Setup is in `kb/README.md`, "Reviewing in the console" |
 
 ## First setup (once per Supabase project: staging and production)
 
@@ -38,7 +39,17 @@ change is a new, higher-numbered file.
      `DATABASE_URL`, and re-read every `KB_REFRESH_S` (60) seconds.
 
 The app's public Supabase keys (`anon`, `authenticated`) can't read or write
-these tables: RLS is on, and the only policies are for `medsight_backend`.
+these tables: RLS is on, and the only policies are for `medsight_backend`
+and, from `0006`, `medsight_review`.
+
+**The review console's login** (after `0006`): `0006` creates the `NOLOGIN`
+role `medsight_review`. The owner then creates the login that inherits from it:
+```sql
+CREATE ROLE medsight_review_app LOGIN PASSWORD '<random password>' IN ROLE medsight_review;
+```
+It can read and edit the `kb_*` rows and add reviews and evidence. It can't
+touch `answers`, `rate_limits`, `scan_log` or `audit_log`. The other steps are
+in `kb/README.md`, "Reviewing in the console".
 
 ## If the database is down
 

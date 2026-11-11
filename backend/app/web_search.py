@@ -20,6 +20,7 @@ Claude Sonnet with web search. Search: Tavily, which takes a domain list.
 """
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -67,9 +68,13 @@ Return JSON with these fields:
 - source: the number of that page (1 or 2), or 0 if found is false
 - description: 1-2 short plain sentences saying what the product is used for, taken \
 from that page; "" if found is false
+- prescription: true only if that page itself says this product needs a doctor's \
+prescription (for example "Rx" or "prescription only"); false otherwise
 
 Rules:
 - Never give doses, amounts, how often to take it, or any other medical advice.
+- Never work out whether a prescription is needed from the ingredients or your own \
+knowledge. If the page marks only some strengths or forms as prescription, use false.
 - If the product has several active ingredients, say what each one is for, by name.
 - Do not mention websites or sources."""
 
@@ -79,9 +84,19 @@ _SCHEMA = {
         "found": {"type": "boolean"},
         "source": {"type": "integer"},
         "description": {"type": "string"},
+        "prescription": {"type": "boolean"},
     },
-    "required": ["found", "source", "description"],
+    "required": ["found", "source", "description", "prescription"],
 }
+
+# The page's own words. The model's "prescription: true" counts only when one of
+# these is on the page it chose and none of the opposite wordings is.
+_RX_STATED = re.compile(r"\brx\b|prescription[- ]only|(?:is|as) a prescription (?:medicine|drug)"
+                        r"|(?:with|by|on) (?:a |doctor'?s? )*prescription\b"
+                        r"|requires? (?:a |doctor'?s? )*prescription"
+                        r"|prohibits dispensing without (?:a )?prescription", re.IGNORECASE)
+_NOT_RX_STATED = re.compile(r"\bnon[- ]?(?:rx|prescription)\b|\botc\b|over[- ]the[- ]counter"
+                            r"|(?<!dispensing )without (?:a |doctor'?s? )*prescription", re.IGNORECASE)
 
 
 class WebSearchUnavailable(Exception):
@@ -101,6 +116,7 @@ class WebAnswer:
     description: str
     source_url: str
     site_name: str
+    rx: bool = False   # the chosen page says this product needs a prescription
 
 
 def site_name(url: str) -> Optional[str]:
@@ -191,6 +207,11 @@ def _description_ok(description: str, product: ParsedProduct) -> bool:
     return len(product.generics) < 2 or all(_mentions_ingredient(words, g) for g in product.generics)
 
 
+def page_states_rx(text: str) -> bool:
+    """The page says prescription in so many words, and doesn't also say non-prescription."""
+    return _RX_STATED.search(text) is not None and _NOT_RX_STATED.search(text) is None
+
+
 def lookup(product: ParsedProduct, record: dict, budget: Callable[[], None]) -> Optional[WebAnswer]:
     """A web answer for an unlisted, branded product, or None (not found, or a
     gate failed). record gets "web" and "web_ms" for the scan log.
@@ -229,8 +250,9 @@ def lookup(product: ParsedProduct, record: dict, budget: Callable[[], None]) -> 
         found = parsed.get("found") is True
         index = int(parsed.get("source") or 0)
         description = " ".join(str(parsed.get("description") or "").split())
+        model_says_rx = parsed.get("prescription") is True
     except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
-        found, index, description = False, 0, ""
+        found, index, description, model_says_rx = False, 0, "", False
 
     if not found or not 1 <= index <= len(sources):
         record["web"] = "not_found"
@@ -238,9 +260,12 @@ def lookup(product: ParsedProduct, record: dict, budget: Callable[[], None]) -> 
     if not _description_ok(description, product):
         record["web"] = "failed_gate"
         return None
-    url = sources[index - 1][0].url
+    chosen, chosen_text = sources[index - 1]
+    url = chosen.url
     record["web"] = "found"
-    return WebAnswer(description, url, site_name(url))
+    rx = model_says_rx and page_states_rx(chosen_text)
+    record["web_rx"] = "yes" if rx else "model_only" if model_says_rx else "no"
+    return WebAnswer(description, url, site_name(url), rx=rx)
 
 
 # --- "not found" markers ---

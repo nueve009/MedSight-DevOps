@@ -24,8 +24,10 @@ copy in git.
 **Sources (team decision, 2026-10-26):** TheFilipinoDoctor
 (`thefilipinodoctor.com`) is the text source, `source_type` `tfd`. MIMS isn't
 used (its drug directory needs an account). The box or insert (`box`,
-`insert`) is still accepted. **The FDA verification portal is always looked
-up by hand; never scrape or automate it.**
+`insert`) is still accepted. **FDA portal values** may be drafted by the
+team's FDA lookup script (within the limits in `CLAUDE.md`, decision
+2026-11-10) or looked up by hand. Either way, a reviewer confirms each value
+on the portal before approving.
 
 ## Workflow
 
@@ -35,13 +37,26 @@ up by hand; never scrape or automate it.**
    `tfd_missing.txt`; find their page or use the box.
 2. **Decide the scope.** Keep only the strengths and forms a user would scan
    at home: drop injections, inhalation solutions and hospital packs.
-3. **Look up each product on the FDA portal by hand**
-   (https://verification.fda.gov.ph). Search the registration number printed
+3. **Look up each product on the FDA portal**
+   (https://verification.fda.gov.ph), by hand or drafted into `staging/` by
+   the FDA lookup script. Search the registration number printed
    on the box ("Reg. No." / "FDA Reg. No.", e.g. `DR-XY12345`) and take a
    screenshot. Fill in `fda_reg_no`, `reg_expiry`, `classification` (OTC/Rx,
    **from the portal, not the website**) and `portal_checked_on`. If it isn't
    found, it's for a different product, or it's registered as a food
    supplement or herbal, drop the product.
+
+   **FDA lookup script:** `python -m scripts.fda_lookup` (or `--brands
+   "Biogesic,Tempra"`) searches the portal for the brands in
+   `staging/brands.txt` and `staging/tfd_products_draft.csv`, one request
+   every 5 seconds at most. It writes `staging/fda_lookup_draft.csv` (every
+   registration the portal returned for each brand), `staging/fda_not_found.txt`
+   and a cache in `staging/fda_cache/`, so a brand is only asked once
+   (`--refresh` asks again). It never picks a registration and never touches
+   `kb/*.csv` or Supabase. The reviewer still chooses the right row by box
+   number, confirms each value on the portal and takes the screenshot. If it
+   stops on a refusal, a login or a CAPTCHA, don't work around it: tell the
+   team.
 4. **Draft the spoken descriptions:**
    ```powershell
    python -m scripts.kb_draft_descriptions
@@ -75,6 +90,168 @@ up by hand; never scrape or automate it.**
    approved rows, then run `eval_kb`.
 9. **Keep a copy in git:** `python -m scripts.kb_build --pull --csv-out kb`
    writes the approved rows into the CSVs here; open a PR with them.
+
+## From staging to the console
+
+Once `staging/` holds the scraper's drafts and the description sheet, the owner
+connection in `KB_ADMIN_DATABASE_URL` puts them in the review queue:
+
+```powershell
+python -m scripts.fda_lookup --push --by "Ana"          # 1. FDA candidates
+python -m scripts.kb_import_staging --by "Ana"          # 2. write staging/import/*.csv and print a summary; read it
+python -m scripts.kb_import_staging --by "Ana" --push   # 3. add the rows to Supabase as pending
+```
+
+`--by` is recorded as `entered_by`, so that person can't approve those rows.
+Then review them in the console.
+
+- **Left empty for review:** classification, FDA number, expiry, manufacturer
+  and portal date (pick them from the FDA candidates), and the checker's
+  columns. `pnf_listed` isn't in the drafts, and the table's default `no`
+  stands until a reviewer sets it.
+- **Descriptions** come from `descriptions_review.csv`, the `approved_description`
+  if someone wrote one, or else the draft. One with a dose or over 300
+  characters is left empty and listed. The summary also lists the drafts the
+  sheet flagged: check those first.
+- **Skipped and listed:** a product whose ingredient count and strengths
+  disagree, with an ingredient not in the drafts, or with no indications text,
+  and its passages. Two different products with one ID are never merged.
+- **Importing again is safe.** Rows that were approved, sent back or edited in
+  the console are left alone, and the columns reviewers fill in are never
+  written. Only untouched pending rows get the new draft text.
+
+The import doesn't apply the scope rule in step 2 of the workflow: a reviewer
+still rejects injections, inhalation solutions and hospital packs.
+
+## Reviewing in the console
+
+The console is a web page for checking rows, comparing them with box photos
+and FDA candidates, hearing what users will hear, and approving them. It runs
+on your own laptop and writes straight to Supabase. **Approvals reach the app
+within about a minute (`KB_REFRESH_S`), with no deploy**, as long as the
+deployed backend uses `KB_BACKEND=postgres`.
+
+### First-time setup (once, by the project owner)
+
+1. **Apply migration 0006** (needs `MIGRATION_DATABASE_URL`, see
+   `migrations/README.md`):
+   ```powershell
+   python -m scripts.migrate --check
+   python -m scripts.migrate
+   ```
+2. **Create the console's database login** in the Supabase SQL editor, with a
+   long random password that never goes in git:
+   ```sql
+   CREATE ROLE medsight_review_app LOGIN PASSWORD '<random password>' IN ROLE medsight_review;
+   ```
+3. **Create the evidence bucket:** see "Two-step sign-in setting" below.
+4. **Add each reviewer's account:** in Supabase, Authentication, Users, "Add
+   user" with their email and a password, with Auto Confirm User ticked, and
+   copy their user ID. (TOTP under Authentication, Multi-Factor matters only
+   with two-step sign-in on.)
+5. **List the reviewers** in the SQL editor. The name here is what gets
+   recorded on every approval:
+   ```sql
+   INSERT INTO reviewers (user_id, name) VALUES ('<user id>', 'Ana'), ('<user id>', 'Ben');
+   ```
+   To remove someone: `UPDATE reviewers SET active = false WHERE name = 'Ana';`
+
+### Each reviewer's laptop
+
+Install the packages (`pip install -r requirements.txt` picks up the two new
+ones), then add this to `backend/.env`. Get the values from the owner:
+
+```
+REVIEW_DATABASE_URL=postgresql://medsight_review_app.<project-ref>:<password>@<pooler host>:5432/postgres
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_ANON_KEY=<the project's public anon key>
+```
+
+Leave out `SUPABASE_JWT_SECRET` unless the project still signs sessions with a
+shared secret; the console normally uses the project's published keys. Then:
+
+```powershell
+python -m scripts.review_console
+```
+
+Open http://127.0.0.1:8100/review/ and sign in with your email and password.
+Press Ctrl+C to stop it.
+
+### Two-step sign-in setting
+
+The authenticator code is controlled by `REVIEW_REQUIRE_MFA`. It defaults to on,
+so a hosted console stays strict. `python -m scripts.review_console` turns it off
+for its own process, unless you add `--require-mfa`, and says which mode it's in
+when it starts. With it off, an email and password are enough. Every other check
+stays: the account must be active in `reviewers`.
+
+The evidence bucket's rules must match the setting, or uploads are refused. The
+commented block in `migrations/0006_review_console.sql` requires the code, so
+paste one of these in the SQL editor.
+
+**(a) Two-step off (local use):**
+```sql
+DROP POLICY IF EXISTS kb_evidence_add ON storage.objects;
+DROP POLICY IF EXISTS kb_evidence_read ON storage.objects;
+CREATE POLICY kb_evidence_add ON storage.objects FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'kb-evidence' AND public.kb_is_active_reviewer());
+CREATE POLICY kb_evidence_read ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'kb-evidence' AND public.kb_is_active_reviewer());
+```
+
+**(b) Two-step back on (before hosting):**
+```sql
+DROP POLICY IF EXISTS kb_evidence_add ON storage.objects;
+DROP POLICY IF EXISTS kb_evidence_read ON storage.objects;
+CREATE POLICY kb_evidence_add ON storage.objects FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'kb-evidence' AND auth.jwt()->>'aal' = 'aal2' AND public.kb_is_active_reviewer());
+CREATE POLICY kb_evidence_read ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'kb-evidence' AND auth.jwt()->>'aal' = 'aal2' AND public.kb_is_active_reviewer());
+```
+
+**If you never ran the storage block,** run this first, then (a):
+```sql
+INSERT INTO storage.buckets (id, name, public) VALUES ('kb-evidence', 'kb-evidence', false)
+    ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.kb_is_active_reviewer() RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+    SELECT EXISTS (SELECT 1 FROM reviewers WHERE user_id = auth.uid() AND active)
+$$;
+REVOKE ALL ON FUNCTION public.kb_is_active_reviewer() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.kb_is_active_reviewer() TO authenticated;
+```
+
+### FDA candidates
+
+```powershell
+python -m scripts.fda_lookup                       # drafts, as in step 3 of the workflow
+python -m scripts.fda_lookup --push --by "Ana"     # upload them (needs KB_ADMIN_DATABASE_URL)
+```
+
+On a product's page, the console lists the candidates for its brand with
+warnings: both OTC and Rx exist, export only, expired or expiring soon, a DRHR
+number not classified as a household remedy, or a strength the script couldn't
+read. **Match the number printed on the box and confirm it on the portal.**
+"Use these values" counts as your edit, so someone else must approve the row.
+
+### The rules
+
+- You can't approve a row you entered or last edited; it isn't even in your
+  queue.
+- Approve unlocks only when every checklist item is ticked, and the dataset
+  rules must still pass.
+- If a row changed while you were reading it, the approval is refused.
+- Every decision is kept permanently in `kb_reviews`, with a copy of the row.
+
+### Closing the Table Editor route
+
+Approving in the Table Editor (below) keeps working as a fallback. Once the
+console is in regular use, switch it off in the SQL editor:
+
+```sql
+UPDATE kb_settings SET allow_table_editor_approval = false;
+```
 
 ## Approving rows in Supabase
 

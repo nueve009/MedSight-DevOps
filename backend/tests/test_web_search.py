@@ -135,6 +135,91 @@ def test_v1_reports_the_web_source_and_stays_ungrounded(cache, web_on, fake_llm)
     assert speech.WEB_WARNING in r["spoken_text"]
 
 
+# --- prescription status from the page ---
+
+RX_PAGE = SearchResult(TFD, "Biogesic", "Biogesic contains paracetamol. Regulatory Classification: Rx. It is used to "
+                                        "relieve mild to moderate pain and to reduce fever.")
+RX_SENTENCE = "According to TheFilipinoDoctor, this is a prescription medicine."
+
+
+def test_page_that_says_prescription_is_spoken_after_the_warning(cache, web_on, fake_llm):
+    web_on.results = [RX_PAGE]
+    fake_llm.reply(SUMMARY, {**summary(), "prescription": True})
+    r = scan(cache)
+    assert r["product"]["prescription"] is True
+    assert r["spoken_text"] == (
+        "Biogesic, Paracetamol 500 milligrams. " + speech.WEB_WARNING + " " + RX_SENTENCE
+        + " According to TheFilipinoDoctor, used to relieve mild to moderate pain and to reduce fever. "
+        + speech.PHARMACIST_ADVICE)
+
+
+def test_prescription_status_survives_the_cache(cache, web_on, fake_llm):
+    web_on.results = [RX_PAGE]
+    fake_llm.reply(SUMMARY, {**summary(), "prescription": True})
+    scan(cache)
+    again = scan(cache, text=labels.BIOGESIC_TEXT + "\nLot 42")
+    assert (again["cache"], again["product"]["prescription"]) == ("hit", True)
+    assert RX_SENTENCE in again["spoken_text"] and len(web_on.queries) == 1
+
+
+@pytest.mark.parametrize("page, model_says", [
+    (BIOGESIC_PAGE, True),   # the model says so, the page doesn't
+    (RX_PAGE, False),        # the page says so, the model doesn't
+    (SearchResult(TFD, "Biogesic", RX_PAGE.text + " Also sold as Non-Rx."), True),   # the page says both
+])
+def test_no_prescription_line_unless_model_and_page_agree(cache, web_on, fake_llm, page, model_says):
+    web_on.results = [page]
+    fake_llm.reply(SUMMARY, {**summary(), "prescription": model_says})
+    r = scan(cache)
+    assert r["tier"] == "web" and r["product"]["prescription"] is False
+    assert "prescription medicine" not in r["spoken_text"]
+
+
+@pytest.mark.parametrize("page_text, model_says, logged", [
+    (RX_PAGE.text, True, "yes"),
+    (BIOGESIC_PAGE.text, True, "model_only"),
+    (BIOGESIC_PAGE.text + " Available over-the-counter.", True, "model_only"),
+    (BIOGESIC_PAGE.text + " Available without a prescription.", True, "model_only"),
+    (RX_PAGE.text, False, "no"),
+])
+def test_the_scan_log_records_the_prescription_decision(web_on, fake_llm, page_text, model_says, logged):
+    web_on.results = [SearchResult(TFD, "Biogesic", page_text)]
+    fake_llm.reply(SUMMARY, {**summary(), "prescription": model_says})
+    record = {}
+    product = llm_parse.ParsedProduct("Biogesic", ("Paracetamol",), ("500 mg",))
+    answer = web_search.lookup(product, record, lambda: None)
+    assert record["web_rx"] == logged and answer.rx is (logged == "yes")
+
+
+def test_a_reply_without_the_field_is_not_prescription(cache, web_on, fake_llm):
+    web_on.results = [RX_PAGE]
+    fake_llm.reply(SUMMARY, summary())
+    assert scan(cache)["product"]["prescription"] is False
+
+
+def test_the_general_tier_never_says_prescription(cache, web_on, fake_llm):
+    web_on.results = []
+    r = scan(cache)
+    assert r["tier"] == "general" and r["product"]["prescription"] is False
+    assert "prescription medicine" not in r["spoken_text"]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Regulatory Classification Rx", True),
+    ("Prescription only medicine.", True),
+    ("This is a prescription drug.", True),
+    ("Available only with a doctor's prescription.", True),
+    ("CAUTION: Foods, Drugs, Devices and Cosmetics Act prohibits dispensing without prescription.", True),
+    ("Regulatory Classification Non-Rx", False),
+    ("Available over the counter.", False),
+    ("You can buy it without a prescription.", False),
+    ("Tell your doctor about other prescription medicines you take.", False),
+    ("Used for fever.", False),
+])
+def test_what_counts_as_the_page_saying_prescription(text, expected):
+    assert web_search.page_states_rx(text) is expected
+
+
 # --- gates: a failed one falls back to the general tier ---
 
 def general_fallback(r) -> bool:

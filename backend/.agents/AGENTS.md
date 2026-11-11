@@ -44,6 +44,9 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `app/description_agent.py` - Medicine description generation (general tier)
 - `app/web_search.py` - Web tier: allow-listed search, Groq summary, safety gates
 - `app/admin.py` - Admin routes for the answer cache (per-person keys, audit log)
+- `app/review.py`, `app/review_auth.py`, `app/review_store.py` - Review console API (Supabase sign-in with two-factor)
+- `review/` - The review console's page; `scripts/review_console.py` runs it locally
+- `scripts/fda_lookup.py` - Rate-limited FDA portal drafts for the team's medicine list
 - `docs/runbook.md` - What to do when something needs fixing (bad answer, keys, outages, drills)
 - `app/store/` - cache and scan log: SQLite locally, Supabase Postgres on Railway (`CACHE_BACKEND`)
 - `migrations/` - numbered SQL files for Supabase, applied by `scripts/migrate.py`
@@ -55,7 +58,8 @@ OCR -> LLM parse -> confidence check -> cache lookup -> description agent
 - `scripts/benchmark_ocr.py` - OCR benchmarking
 - `scripts/sort_packaging_images.py` - Sorts dataset images into `sorted_output/`
 - `kb/` - Reviewed dataset of the supported medicines, sourced from
-  TheFilipinoDoctor and hand FDA-portal lookups (see `kb/README.md`)
+  TheFilipinoDoctor and FDA-portal lookups, by hand or by the team's
+  rate-limited lookup script (see `kb/README.md`)
 - `scripts/kb_build.py` - Validates `kb/` and builds `data/kb.sqlite`
 - `scripts/kb_draft_descriptions.py` - LLM drafts of spoken descriptions for the team to check
 - `scripts/eval_kb.py` - Runs the labeled scans; 0 wrong reviewed answers is the release gate
