@@ -1,0 +1,6 @@
+# Gitleaks findings reviewed and accepted as fake test data (PR #55, commit 53caa7f).
+
+# One entry per finding. Do not add folder-wide or rule-wide ignores here.
+
+53caa7fcd44cd4cb9691f95ca8315f2e3d97cd4e:backend/tests/test_review_routes.py:generic-api-key:15
+53caa7fcd44cd4cb9691f95ca8315f2e3d97cd4e:backend/tests/test_review_auth.py:generic-api-key:12
