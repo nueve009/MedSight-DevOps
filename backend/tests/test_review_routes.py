@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app import config, review
+from app import config, review, speech
 from app.api import app as api_app
 from app.review_store import TABLES, Conflict, RuleRefused
 
@@ -48,11 +48,28 @@ def candidate(**changes) -> dict:
             "portal_checked_on": "2026-11-10", "note": "", "export_only": False, **changes}
 
 
+TFD_PAGE = "https://thefilipinodoctor.com/drug/testflu"
+
+
+def web_row(**changes) -> dict:
+    return {"cache_key": "abc123", "tier": "web", "status": "pending_review",
+            "description": "Used to relieve test pain.",
+            "product": {"brand": "Testflu", "generics": ["Fakeamol"], "strengths": ["500 mg"], "rx": True},
+            "source_urls": [TFD_PAGE], "page_text": "Testflu is for test pain.",
+            "created_at": "2026-11-10T00:00:00+00:00", "expires_at": "2026-12-10T00:00:00+00:00", **changes}
+
+
+def send_body(**changes) -> dict:
+    return {"brand_name": "Testflu", "generic_names": "Fakeamol", "strengths": "500 mg", "dosage_form": "Tablet",
+            "passage_text": "For test pain.", "source_type": "tfd", "source_ref": TFD_PAGE, **changes}
+
+
 class FakeStore:
     def __init__(self):
         self.rows = {"products": {"testflu-500-tab": product_row()}, "ingredients": {"Fakeamol": ingredient_row()},
                      "passages": {"testflu-500-tab-ind-1": passage_row()}}
         self.candidates = [candidate()]
+        self.web = web_row()
         self.calls = []
         self.queue_calls = []
 
@@ -105,6 +122,19 @@ class FakeStore:
     def fda_candidate(self, candidate_id):
         return next((c for c in self.candidates if c["id"] == candidate_id), None)
 
+    def web_answers(self):
+        return [self.web]
+
+    def web_answer(self, cache_key):
+        return self.web if cache_key == self.web["cache_key"] else None
+
+    def reject_web_answer(self, cache_key, actor):
+        self.calls.append(("reject", cache_key, actor))
+
+    def send_web_answer(self, cache_key, actor, product, passage, note):
+        self.calls.append(("send", cache_key, actor, product, passage, note))
+        return ["Fakeamol"]
+
 
 class FakeStorage:
     def __init__(self):
@@ -155,6 +185,8 @@ APPROVE = {"checklist": PRODUCT_CHECKLIST, "version": "2026-11-10T00:00:00+00:00
 @pytest.mark.parametrize("method, path", [
     ("get", "/admin/kb/queue"), ("get", "/admin/kb/mine"), ("get", "/admin/kb/meta"), ("get", "/admin/review/stats"),
     ("get", PATH), ("get", f"{PATH}/fda-candidates"), ("delete", PATH),
+    ("get", "/admin/web-answers"), ("post", "/admin/web-answers/abc123/reject"),
+    ("post", "/admin/web-answers/abc123/send"),
 ])
 def test_every_route_needs_a_reviewer(client, method, path):
     assert getattr(client, method)(path).status_code == 401
@@ -458,3 +490,87 @@ def test_unknown_candidate_is_404(client):
 
 def test_tables_are_the_three_dataset_tables():
     assert {t.name for t in TABLES.values()} == {"kb_products", "kb_ingredients", "kb_passages"}
+
+# --- web answers ---
+
+SEND = "/admin/web-answers/abc123/send"
+
+
+def test_web_answers_show_what_users_hear(client):
+    (item,) = client.get("/admin/web-answers", headers=auth()).json()
+    assert (item["brand"], item["generics"], item["strengths"]) == ("Testflu", ["Fakeamol"], ["500 mg"])
+    assert (item["prescription"], item["site"]) == (True, "TheFilipinoDoctor")
+    assert item["page_text"] == "Testflu is for test pain."
+    assert speech.WEB_WARNING in item["spoken"]
+    assert "According to TheFilipinoDoctor, this is a prescription medicine." in item["spoken"]
+
+
+def test_reject_is_recorded_under_the_signed_in_reviewer(client, store):
+    assert client.post("/admin/web-answers/abc123/reject", headers=auth("Cy")).status_code == 200
+    assert store.calls == [("reject", "abc123", "Cy")]
+
+
+def test_send_makes_pending_rows_with_no_fda_values_or_checker(client, store):
+    r = client.post(SEND, json=send_body(), headers=auth("Cy"))
+    assert r.status_code == 201
+    assert r.json() == {"product_id": "testflu-500-mg-tablet", "ingredients_added": ["Fakeamol"]}
+    _, key, actor, product, passage, note = store.calls[0]
+    assert (key, actor, product["entered_by"], passage["entered_by"]) == ("abc123", "Cy", "Cy", "Cy")
+    assert product["spoken_description"] == "Used to relieve test pain."
+    for field in ("classification", "fda_reg_no", "reg_expiry", "manufacturer", "portal_checked_on", "checked_by",
+                  "description_checked_by"):
+        assert product[field] == ""   # rx on the page never becomes a classification
+    assert (passage["passage_id"], passage["section"], passage["checked_by"]) == (
+        "testflu-500-mg-tablet-ind-1", "indications", "")
+    assert TFD_PAGE in note
+
+
+def test_send_uses_a_chosen_product_id(client, store):
+    assert client.post(SEND, json=send_body(product_id="testflu-500-tab2"), headers=auth()).status_code == 201
+    assert store.calls[0][3]["product_id"] == "testflu-500-tab2"
+
+
+@pytest.mark.parametrize("source_type, source_ref", [
+    ("box", "https://hellodoctor.com.ph/testflu"),   # a web page passed off as the box
+    ("insert", "http://example.test/page"),
+    ("tfd", "https://hellodoctor.com.ph/testflu"),   # only TheFilipinoDoctor is tfd
+    ("web", "https://hellodoctor.com.ph/testflu"),   # not a source type
+])
+def test_a_web_page_alone_cannot_back_a_reviewed_medicine(client, store, source_type, source_ref):
+    r = client.post(SEND, json=send_body(source_type=source_type, source_ref=source_ref), headers=auth())
+    assert r.status_code == 422 and store.calls == []
+
+
+def test_a_box_photo_can_back_it(client, store):
+    body = send_body(source_type="box", source_ref="box-1.jpg")
+    assert client.post(SEND, json=body, headers=auth()).status_code == 201
+
+
+@pytest.mark.parametrize("field", ["brand_name", "generic_names", "strengths", "dosage_form", "passage_text",
+                                   "source_type", "source_ref"])
+def test_send_needs_every_field(client, store, field):
+    assert client.post(SEND, json=send_body(**{field: "  "}), headers=auth()).status_code == 422
+    assert store.calls == []
+
+
+def test_send_refuses_strengths_that_dont_pair(client, store):
+    assert client.post(SEND, json=send_body(strengths="500 mg|2 mg"), headers=auth()).status_code == 422
+    assert store.calls == []
+
+
+def test_send_refuses_a_bad_product_id(client, store):
+    assert client.post(SEND, json=send_body(product_id="Bad ID"), headers=auth()).status_code == 422
+
+
+def test_send_refuses_a_description_with_a_dose(client, store):
+    store.web = web_row(description="TEST: take 2 tablets every 4 hours.")
+    assert client.post(SEND, json=send_body(), headers=auth()).status_code == 422
+    assert store.calls == []
+
+
+def test_send_for_an_answer_no_longer_waiting_is_404(client):
+    assert client.post("/admin/web-answers/gone/send", json=send_body(), headers=auth()).status_code == 404
+
+
+def test_send_cannot_set_a_checker_or_approval(client):
+    assert client.post(SEND, json=send_body(checked_by="Ben"), headers=auth()).status_code == 422

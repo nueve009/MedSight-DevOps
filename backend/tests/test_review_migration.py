@@ -97,7 +97,7 @@ def test_review_history_is_append_only(db):
         pg_execute("DELETE FROM kb_reviews")
 
 
-@pytest.mark.parametrize("table", ["answers", "scan_log", "rate_limits", "audit_log", "kb_settings"])
+@pytest.mark.parametrize("table", ["parses", "scan_log", "rate_limits", "audit_log", "kb_settings"])
 def test_review_role_has_no_access_to_other_tables(db, table):
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         as_review(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table)).as_string())
@@ -131,3 +131,56 @@ def test_existing_approved_rows_get_the_approved_state(db):
     pg_execute("UPDATE kb_products SET review_state = 'pending'")
     pg_execute("UPDATE kb_products SET review_state = 'approved' WHERE approved")
     assert state() == (True, "approved", "Ben")
+
+# --- 0007: web answers ---
+
+def add_web(key="k1", tier="web"):
+    pg_execute("INSERT INTO answers (cache_key, tier, product, description, status) "
+               "VALUES (%s, %s, '{}', 'Test.', 'pending_review')", key, tier)
+
+
+def test_review_role_sees_web_answers_only(db):
+    add_web("web")
+    add_web("general", "general")
+    assert as_review("SELECT cache_key FROM answers") == [("web",)]
+
+
+def test_review_role_can_only_reject_an_answer(db):
+    add_web()
+    as_review("UPDATE answers SET status = 'rejected'")
+    assert pg_execute("SELECT status FROM answers") == [("rejected",)]
+    pg_execute("UPDATE answers SET status = 'pending_review'")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_review("UPDATE answers SET status = 'active'")   # a policy: only 'rejected' is allowed
+    for statement in ("UPDATE answers SET description = 'Changed.'", "UPDATE answers SET tier = 'general'",
+                      "DELETE FROM answers", "INSERT INTO answers (cache_key, tier, product, description) "
+                                             "VALUES ('x', 'web', '{}', 'New.')"):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            as_review(statement)
+
+
+def test_review_role_cannot_touch_a_general_answer(db):
+    add_web("general", "general")
+    as_review("UPDATE answers SET status = 'rejected'")   # invisible, so nothing to update
+    assert pg_execute("SELECT status FROM answers") == [("pending_review",)]
+
+
+def test_review_role_can_only_add_its_own_audit_actions(db):
+    as_review("INSERT INTO audit_log (admin, action, cache_key) VALUES ('Ben', 'reject', 'k')")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_review("INSERT INTO audit_log (admin, action, cache_key) VALUES ('Ben', 'delete', 'k')")
+    for statement in ("SELECT * FROM audit_log", "UPDATE audit_log SET admin = 'x'", "DELETE FROM audit_log"):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            as_review(statement)
+
+
+def test_a_link_can_be_added_but_not_changed(db):
+    as_review("INSERT INTO kb_web_sends (cache_key, product_id, sent_by) VALUES ('k', 'testflu-500-tab', 'Ben')")
+    for statement in ("UPDATE kb_web_sends SET sent_by = 'x'", "DELETE FROM kb_web_sends"):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            as_review(statement)
+
+
+def test_answers_already_cached_get_an_empty_page_text(db):
+    add_web()
+    assert pg_execute("SELECT page_text FROM answers") == [("",)]

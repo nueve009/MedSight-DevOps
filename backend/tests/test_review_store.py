@@ -178,3 +178,103 @@ def test_an_approved_row_reaches_the_backend_role(store):
     # What Mon's "no deploy" depends on: the same row the backend's loader reads.
     store.approve(PRODUCTS, "testflu-500-tab", "Ben", {}, version(store))
     assert pg_execute("SELECT count(*) FROM kb_products WHERE approved")[0][0] == 1
+
+# --- web answers (migration 0007) ---
+
+WEB_PRODUCT_JSON = '{"brand": "Webflu", "generics": ["Newamol"], "strengths": ["500 mg"]}'
+NEW_PRODUCT = {"product_id": "webflu-500-tab", "brand_name": "Webflu", "generic_names": "Newamol|Fakeamol",
+               "strengths": "500 mg|10 mg", "dosage_form": "Tablet", "spoken_description": "Used to relieve test pain."}
+NEW_PASSAGE = {"passage_id": "webflu-500-tab-ind-1", "product_id": "webflu-500-tab", "section": "indications",
+               "text": "For test pain.", "source_type": "box", "source_ref": "box-1.jpg"}
+
+
+def add_answer(key="k1", tier="web", status="pending_review", expires="now() + interval '30 days'"):
+    pg_execute("INSERT INTO answers (cache_key, tier, product, description, source_urls, status, expires_at, "
+               "page_text) VALUES (%s, %s, %s, 'Used to relieve test pain.', '[\"https://x.test\"]', %s, "
+               f"{expires}, 'Page text.')",
+               key, tier, WEB_PRODUCT_JSON, status)
+
+
+def send(store, key="k1", actor="Ben"):
+    return store.send_web_answer(key, actor, NEW_PRODUCT, NEW_PASSAGE, "Sent from a web answer: https://x.test")
+
+
+def test_web_answers_lists_only_what_is_still_waiting(store):
+    add_answer("waiting")
+    add_answer("active", status="active")
+    add_answer("rejected", status="rejected")
+    add_answer("general", tier="general", status="active", expires="NULL")
+    add_answer("expired", expires="now() - interval '1 day'")
+    assert sorted(a["cache_key"] for a in store.web_answers()) == ["active", "waiting"]
+    assert store.web_answer("waiting")["page_text"] == "Page text."
+    assert store.web_answer("general") is None and store.web_answer("rejected") is None
+
+
+def test_reject_stops_it_and_is_audited(store):
+    add_answer()
+    store.reject_web_answer("k1", "Ben")
+    assert pg_execute("SELECT status FROM answers") == [("rejected",)]
+    (entry,) = pg_execute("SELECT admin, action, cache_key, before->>'status', after->>'status' FROM audit_log")
+    assert entry == ("Ben", "reject", "k1", "pending_review", "rejected")
+    with pytest.raises(Conflict):
+        store.reject_web_answer("k1", "Ben")
+
+
+def test_reject_of_a_missing_or_general_answer_is_not_found(store):
+    add_answer("general", tier="general", status="active", expires="NULL")
+    for key in ("nope", "general"):
+        with pytest.raises(RowNotFound):
+            store.reject_web_answer(key, "Ben")
+
+
+def test_send_creates_pending_rows_and_only_missing_ingredients(store):
+    add_answer()
+    assert send(store) == ["Newamol"]   # Fakeamol is already listed
+    row = pg_execute("SELECT approved, review_state, entered_by, fda_reg_no, classification, checked_by, review_note "
+                     "FROM kb_products WHERE product_id = 'webflu-500-tab'")[0]
+    assert row == (False, "pending", "Ben", None, "", "", "Sent from a web answer: https://x.test")
+    assert pg_execute("SELECT approved, entered_by, pnf_listed FROM kb_ingredients WHERE generic_name = 'Newamol'") == [
+        (False, "Ben", "no")]
+    assert pg_execute("SELECT approved, entered_by, source_type FROM kb_passages") == [(False, "Ben", "box")]
+    assert pg_execute("SELECT cache_key, product_id, sent_by FROM kb_web_sends") == [("k1", "webflu-500-tab", "Ben")]
+    assert pg_execute("SELECT admin, action, after->>'product_id' FROM audit_log") == [
+        ("Ben", "send_to_kb", "webflu-500-tab")]
+
+
+def test_a_sent_answer_leaves_the_tab_but_keeps_being_spoken(store):
+    add_answer()
+    send(store)
+    assert store.web_answers() == []
+    assert pg_execute("SELECT status FROM answers") == [("pending_review",)]
+
+
+def test_send_is_all_or_nothing(store):
+    add_answer()
+    store.add_row(PRODUCTS, {**PRODUCT, "product_id": "webflu-500-tab", "fda_reg_no": "DR-XY00001"}, "Ana")
+    with pytest.raises(Conflict):
+        send(store)   # the product ID is taken, after the ingredient was inserted
+    assert pg_execute("SELECT count(*) FROM kb_ingredients WHERE generic_name = 'Newamol'") == [(0,)]
+    assert pg_execute("SELECT count(*) FROM kb_web_sends") == [(0,)]
+    assert pg_execute("SELECT count(*) FROM audit_log") == [(0,)]
+
+
+def test_an_answer_cannot_be_sent_twice(store):
+    add_answer()
+    send(store)
+    with pytest.raises(Conflict):
+        store.send_web_answer("k1", "Ben", {**NEW_PRODUCT, "product_id": "other"},
+                              {**NEW_PASSAGE, "passage_id": "other-ind-1", "product_id": "other"}, "n")
+
+
+def test_deleting_the_unapproved_product_returns_the_answer_to_the_tab(store):
+    add_answer()
+    send(store)
+    store.delete_row(PRODUCTS, "webflu-500-tab", "Ben")
+    assert [a["cache_key"] for a in store.web_answers()] == ["k1"]
+
+
+def test_the_sender_cannot_approve_what_they_sent(store):
+    add_answer()
+    send(store)
+    assert store.queue(PRODUCTS, "webflu", "Ben") == []
+    assert [r["key"] for r in store.queue(PRODUCTS, "webflu", "Cy")] == ["webflu-500-tab"]

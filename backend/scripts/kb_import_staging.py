@@ -29,7 +29,6 @@ still-pending row edited there can be updated by a later run.
 """
 import argparse
 import csv
-import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +43,7 @@ from app.kb_validate import (
     SECTIONS,
     TFD_URL_RE,
     Validator,
+    derive_product_id,
     split_list,
     validate_rows,
 )
@@ -89,10 +89,6 @@ def read_staging(staging_dir: Path, name: str) -> list[dict]:
                 sys.exit(f"{path}:{line_no}: too many columns (an unquoted comma in a value?)")
             rows.append({k: (v or "").strip() for k, v in row.items()})
         return rows
-
-
-def derive_id(brand: str, strengths: list[str], form: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", f"{brand} {' '.join(strengths)} {form}".lower()).strip("-")
 
 
 def usable_description(sheet_row: dict | None) -> tuple[str, str]:
@@ -159,7 +155,7 @@ def map_products(staging: list[dict], sheet: dict, known_generics: set[str], by:
         elif unknown:
             report.skipped.append(f"{label}: ingredient not in {INGREDIENTS_FILE}: {', '.join(unknown)}")
         else:
-            pid = given if ID_RE.match(given) else derive_id(brand, strengths, form)
+            pid = given if ID_RE.match(given) else derive_product_id(brand, strengths, form)
             if not pid:
                 report.skipped.append(f"{label}: no usable product_id")
                 continue
