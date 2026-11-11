@@ -66,13 +66,13 @@ def test_the_page_is_told_when_two_step_is_on(client, monkeypatch):
 
 
 def test_the_launcher_is_off_by_default_and_the_flag_turns_it_on():
-    assert rc.parse_args([]).require_mfa is False
-    assert rc.parse_args(["--require-mfa"]).require_mfa is True
+    assert rc.parse_args([]).two_step is False
+    assert rc.parse_args(["--require-mfa"]).two_step is True
 
 
 def test_the_launcher_says_which_mode_it_is_in():
-    assert rc.mfa_line(False) == "Two-step sign-in: OFF (local testing only; turn on before hosting)"
-    assert rc.mfa_line(True) == "Two-step sign-in: ON"
+    assert rc.sign_in_line(False) == "Two-step sign-in: OFF (local testing only; turn on before hosting)"
+    assert rc.sign_in_line(True) == "Two-step sign-in: ON"
 
 
 def test_the_page_is_strict_unless_told_otherwise():
