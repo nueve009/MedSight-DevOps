@@ -292,7 +292,7 @@ class IdentifyV2Response(BaseModel):
     rescan_reason: Optional[Literal["no_text", "too_much_text", "no_name", "name_not_in_text",
                                     "strength_unread", "ingredients_incomplete"]]
     hint: Optional[Literal["move_closer", "more_light", "turn_box"]]
-    tier: Optional[Literal["reviewed", "ingredient", "web", "general"]]
+    tier: Optional[Literal["reviewed", "ingredient", "web", "general", "brand"]]
     product: Optional[ProductOut]
     description: Optional[str]
     sources: list[str]

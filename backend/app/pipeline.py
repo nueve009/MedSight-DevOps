@@ -115,6 +115,20 @@ def _no_answer(decision: Decision) -> dict:
     return _response(decision, spoken)
 
 
+def _no_answer_for(decision: Decision, read: Optional[ParsedProduct], kb: KnowledgeBase, record: dict) -> dict:
+    """_no_answer, except a give-up on a listed brand whose strength can't be read
+    says what the brand is, from approved text only. read: the product as read."""
+    listed = (kb.brand_level(read) if read and decision.status == "gave_up"
+              and decision.reason == scan_rules.STRENGTH_UNREAD else None)
+    if listed is None:
+        return _no_answer(decision)
+    record["match"], record["kb_version"] = speech.BRAND, kb.version
+    spoken = speech.brand_give_up(listed.brand, list(listed.generics), listed.spoken_description, rx=listed.rx)
+    return _response(decision, spoken, tier=speech.BRAND,
+                     product=_product_json(ParsedProduct(listed.brand, listed.generics, ()), listed.rx),
+                     description=listed.spoken_description, sources=list(listed.sources))
+
+
 def _web(product, key: str, cache: Store, record: dict, budget: Callable[[], None],
          web_budget: Callable[[], None]) -> Optional[web_search.WebAnswer]:
     """A new web answer (cached as pending_review), or None: the web tier is
@@ -240,15 +254,16 @@ def identify_scan(req: ScanRequest, cache: Store, kb: Optional[KnowledgeBase] = 
                                      req.ocr_confidence)
 
     if decision.status not in ANSWER_STATUSES:
-        return _finish(record, _no_answer(decision), started, cache)
+        return _finish(record, _no_answer_for(decision, decision.product, kb, record), started, cache)
 
     match = kb.match(decision.product)
     record["match"], record["kb_version"] = match.kind, kb.version
     if match.kind == retrieval.PARTIAL:
         # A listed brand with a missing or different ingredient or strength:
         # never answered, and named with the dataset's spelling.
+        read = decision.product
         decision = scan_rules.rescan(match.reason, req.hints, req.attempt, match.product.as_parsed())
-        return _finish(record, _no_answer(decision), started, cache)
+        return _finish(record, _no_answer_for(decision, read, kb, record), started, cache)
     return _finish(record, _answer(decision, match, cache, record, budget, web_budget), started, cache)
 
 

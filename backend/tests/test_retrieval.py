@@ -85,6 +85,59 @@ def test_brand_with_several_forms_prefers_the_strength_reason(kb):
     assert (m.kind, m.reason) == (PARTIAL, STRENGTH_UNREAD)
 
 
+# --- brand level: a give-up where the strength can't be read ---
+
+def level(kb, brand, generics=(), strengths=()):
+    return kb.brand_level(ParsedProduct(brand, tuple(generics), tuple(strengths)))
+
+
+def test_brand_level_for_a_brand_read_alone(kb):
+    assert level(kb, "Biogesic").brand == "Biogesic"
+
+
+def test_brand_level_with_the_ingredient_read_and_strength_faded(kb):
+    assert level(kb, "Biogesic", ["Acetaminophen"], [""]).brand == "Biogesic"   # a synonym still agrees
+
+
+def test_brand_level_when_every_form_says_the_same(kb):
+    assert level(kb, "Tempra").brand == "Tempra"   # two strengths, same ingredients, description, Rx
+
+
+def test_brand_level_is_never_for_a_fuzzy_brand(kb):
+    assert level(kb, "Bi0gesic") is None
+
+
+def test_brand_level_needs_a_brand_on_the_list(kb):
+    assert level(kb, "Unlistedol") is None
+    assert level(kb, None, ["Paracetamol"], [""]) is None
+
+
+def test_brand_level_refuses_a_fully_read_strength(kb):
+    assert level(kb, "Biogesic", ["Paracetamol"], ["650 mg"]) is None
+    assert level(kb, "Biogesic", ["Paracetamol"], ["500 mg"]) is None
+
+
+def test_brand_level_refuses_a_read_ingredient_the_brand_doesnt_have(kb):
+    assert level(kb, "Biogesic", ["Ibuprofen"], [""]) is None
+
+
+def test_brand_level_refuses_a_partly_read_strength_that_disagrees(kb):
+    assert level(kb, "Alaxan FR", ["Ibuprofen", "Paracetamol"], ["400 mg", ""]) is None
+    assert level(kb, "Alaxan FR", ["Ibuprofen", "Paracetamol"], ["200 mg", ""]).brand == "Alaxan FR"
+
+
+@pytest.mark.parametrize("change", [
+    {"spoken_description": "TEST: something else."},
+    {"classification": "Rx"},
+    {"generic_names": "Ibuprofen"},
+])
+def test_brand_level_refuses_a_brand_whose_products_differ(tmp_path, change):
+    rows = review_rows()
+    rows["products"].append(product("tempra-250-tab", "Tempra", "Paracetamol", "250 mg", **change))
+    rows["passages"].append(tfd_passage("tempra-250-tab"))
+    assert level(build_kb(tmp_path, rows), "Tempra") is None
+
+
 # --- never the wrong product ---
 
 def test_same_ingredients_under_another_brand_is_never_that_brand(kb):

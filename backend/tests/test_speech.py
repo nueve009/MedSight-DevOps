@@ -114,6 +114,18 @@ def test_gave_up_messages():
         "I still can't read this label clearly. Please ask someone to check it for you.")
 
 
+def test_brand_give_up_says_it_cant_confirm_first_and_never_a_strength():
+    assert speech.brand_give_up("Biogesic", ["Paracetamol"], "Used to relieve pain") == (
+        "I can read Biogesic, but I can't read the strength, so I can't confirm exactly which product this is. "
+        "Biogesic contains Paracetamol. Used to relieve pain. "
+        "Please ask someone to check the label, or ask a pharmacist, before taking it.")
+
+
+def test_brand_give_up_names_every_ingredient_and_rx():
+    spoken = speech.brand_give_up("Alaxan FR", ["Ibuprofen", "Paracetamol"], "Used for pain.", rx=True)
+    assert "Alaxan FR contains Ibuprofen and Paracetamol. This is a prescription medicine. Used for pain." in spoken
+
+
 def test_fixed_messages():
     assert speech.MULTIPLE == "I can see more than one medicine. Please set the others aside and scan one at a time."
     assert speech.SERVICE_BUSY == ("The identification service is busy or unavailable right now. "
