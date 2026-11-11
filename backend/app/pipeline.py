@@ -256,7 +256,8 @@ def identify_scan(req: ScanRequest, cache: Store, kb: Optional[KnowledgeBase] = 
     if decision.status not in ANSWER_STATUSES:
         return _finish(record, _no_answer_for(decision, decision.product, kb, record), started, cache)
 
-    match = kb.match(decision.product)
+    # Clear means the phone reported a good confidence: unknown isn't clear.
+    match = kb.match(decision.product, clear_reading=decision.status == "ok" and req.ocr_confidence is not None)
     record["match"], record["kb_version"] = match.kind, kb.version
     if match.kind == retrieval.PARTIAL:
         # A listed brand with a missing or different ingredient or strength:

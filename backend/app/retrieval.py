@@ -182,7 +182,18 @@ class KnowledgeBase:
         reasons = {partial_match_reason(p, list(k.generics), list(k.strengths), same) for k in candidates}
         return STRENGTH_UNREAD if STRENGTH_UNREAD in reasons else INGREDIENTS_INCOMPLETE
 
-    def match(self, p: ParsedProduct) -> Match:
+    def _other_strength(self, p: ParsedProduct, candidates: list[KBProduct]) -> bool:
+        """Every ingredient and strength was read, the ingredients are this brand's,
+        and the strength just isn't one we list (the caller knows no product fully matched)."""
+        read = self._contents(p.generics, p.strengths)
+        if read is None:
+            return False
+        listed = [self._contents(k.generics, k.strengths) for k in candidates]
+        return all(contents is not None and contents.keys() == read.keys() for contents in listed)
+
+    def match(self, p: ParsedProduct, clear_reading: bool = False) -> Match:
+        """clear_reading: the OCR was confident, so a strength we don't list is
+        treated as a product we don't list rather than a misread (a rescan)."""
         if p.brand and self.products:
             key = brand_key(p.brand)
             exact = [k for k in self.products if key in k.brand_keys]
@@ -198,7 +209,7 @@ class KnowledgeBase:
                 # or Rx status (e.g. two forms): don't pick one.
                 log.warning("ambiguous dataset match", extra={"fields": {
                     "product_ids": [k.product_id for k in full]}})
-            elif exact:
+            elif exact and not (clear_reading and self._other_strength(p, exact)):
                 return Match(PARTIAL, exact[0], reason=self._partial_reason(p, exact))
 
         return self._ingredient_match(p)

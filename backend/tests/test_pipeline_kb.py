@@ -108,6 +108,27 @@ def test_rx_brand_says_so_at_brand_level(fake_llm, cache, kb):
     assert speech.RX_LINE in r["spoken_text"]
 
 
+def test_a_clearly_read_unlisted_strength_is_answered_with_a_warning(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Dolfenal", ["Mefenamic acid"], ["250 mg"])))
+    fake_llm.reply(DESCRIBE, {"description": "A pain reliever.", "confidence": 0.5})
+    r = scan(cache, kb, text="DOLFENAL\nMefenamic acid 250 mg", ocr_confidence=0.9)
+    assert (r["status"], r["tier"], r["matched_product_id"]) == ("ok", "general", None)
+    assert speech.GENERAL_WARNING in r["spoken_text"] and speech.REVIEWED_LINE not in r["spoken_text"]
+
+
+def test_a_shaky_reading_of_an_unlisted_strength_is_still_a_rescan(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Dolfenal", ["Mefenamic acid"], ["250 mg"])))
+    r = scan(cache, kb, text="DOLFENAL\nMefenamic acid 250 mg", ocr_confidence=0.3)
+    assert (r["status"], r["rescan_reason"], r["tier"]) == ("rescan", "strength_unread", None)
+    assert fake_llm.count(DESCRIBE) == 0
+
+
+def test_an_unknown_confidence_is_not_a_clear_reading(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Dolfenal", ["Mefenamic acid"], ["250 mg"])))
+    r = scan(cache, kb, text="DOLFENAL\nMefenamic acid 250 mg", ocr_confidence=None)
+    assert (r["status"], r["rescan_reason"]) == ("rescan", "strength_unread")
+
+
 def test_a_read_strength_that_is_not_listed_gets_no_brand_answer(fake_llm, cache, kb):
     fake_llm.reply(PARSE, labels.reply(labels.product("Biogesic", ["Paracetamol"], ["650 mg"])))
     r = scan(cache, kb, text="BIOGESIC\nParacetamol 650 mg", attempt=3, ocr_confidence=0.3)

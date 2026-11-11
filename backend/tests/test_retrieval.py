@@ -70,6 +70,31 @@ def test_wrong_strength_is_a_strength_rescan(kb):
     assert match(kb, "Biogesic", ["Paracetamol"], ["650 mg"]).reason == STRENGTH_UNREAD
 
 
+def test_a_clearly_read_strength_we_dont_list_is_an_unlisted_product(kb):
+    p = ParsedProduct("Dolfenal", ("Mefenamic acid",), ("250 mg",))
+    assert (kb.match(p, clear_reading=True).kind, kb.match(p).kind) == (NONE, PARTIAL)
+
+
+def test_a_clearly_read_other_strength_can_use_the_ingredient_tier(kb):
+    p = ParsedProduct("Biogesic", ("Paracetamol",), ("650 mg",))
+    assert kb.match(p, clear_reading=True).kind == INGREDIENT
+
+
+@pytest.mark.parametrize("brand, generics, strengths", [
+    ("Biogesic", (), ()),                                  # nothing read but the brand
+    ("Biogesic", ("Paracetamol",), ("",)),                 # strength faded
+    ("Biogesic", ("Ibuprofen",), ("200 mg",)),             # other ingredients
+    ("Alaxan FR", ("Paracetamol",), ("325 mg",)),          # combination read short
+])
+def test_a_clear_reading_still_rescans_anything_but_another_strength(kb, brand, generics, strengths):
+    assert kb.match(ParsedProduct(brand, generics, strengths), clear_reading=True).kind == PARTIAL
+
+
+def test_a_clear_reading_still_matches_the_listed_strength(kb):
+    p = ParsedProduct("Biogesic", ("Paracetamol",), ("500 mg",))
+    assert kb.match(p, clear_reading=True).kind == REVIEWED
+
+
 def test_combination_read_with_fewer_ingredients_is_incomplete(kb):
     """Alaxan FR read as paracetamol only must never become Biogesic or an answer."""
     m = match(kb, "Alaxan FR", ["Paracetamol"], ["325 mg"])
