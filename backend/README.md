@@ -191,7 +191,7 @@ Response (200):
   "status": "ok | ok_caveat | rescan | multiple | gave_up",
   "rescan_reason": "no_text | too_much_text | no_name | name_not_in_text | strength_unread | ingredients_incomplete | null",
   "hint": "move_closer | more_light | turn_box | null",
-  "tier": "reviewed | ingredient | web | general | null",
+  "tier": "reviewed | ingredient | web | general | brand | null",
   "product": {"brand": "Biogesic", "generics": ["Paracetamol"], "strengths": ["500 mg"], "prescription": false},
   "description": "A pain reliever and fever reducer.",
   "sources": [],
@@ -210,17 +210,23 @@ Response (200):
   - `rescan`: ask the user to scan again. `rescan_reason` says why and `hint`
     what to do (`turn_box`: scan the side with the ingredients list). A
     brand in the reviewed list whose strength or ingredients don't fully
-    match is always a rescan, e.g. "I found Biogesic but couldn't read the
-    strength. Turn the box and scan the side with the ingredients."
+    match is a rescan, e.g. "I found Biogesic but couldn't read the strength.
+    Turn the box and scan the side with the ingredients." The one exception:
+    its ingredients and a strength we don't list, with a good
+    `ocr_confidence` reported, is treated as an unlisted product and answered
+    with that tier's warning. Without `ocr_confidence` it stays a rescan.
   - `multiple`: two different brands, or two strengths of one brand, are in
     view. The user hears "I can see more than one medicine. Please set the
     others aside and scan one at a time."
   - `gave_up`: sent instead of `rescan` from attempt 3 on, saying only what
     was read clearly, e.g. "I can read Biogesic but not the strength. Please
-    ask someone to check the label." Reset `attempt` after it.
-- `product` and `tier` are `null` unless `status` is `ok` or `ok_caveat`.
-  `generics` and `strengths` are paired by position (a combination product
-  lists every ingredient).
+    ask someone to check the label." Reset `attempt` after it. Send `attempt`
+    (1, 2, 3...) for rescans of the same item, or this never happens. For a
+    listed brand whose strength can't be read, it can carry the `brand` tier.
+- `product` and `tier` are `null` unless `status` is `ok` or `ok_caveat`, or
+  a `gave_up` with the `brand` tier. `generics` and `strengths` are paired by
+  position (a combination product lists every ingredient); `brand` has an
+  empty `strengths`.
 - `tier`: where the description comes from. The spoken text says it, before
   the description:
 
@@ -230,6 +236,7 @@ Response (200):
   | `ingredient` | not a listed product, but every ingredient has a team-reviewed description | "Our team hasn't reviewed this product yet. Based on its ingredients, ..." |
   | `web` | allow-listed web search (M6; on when `WEB_SEARCH_PROVIDER=tavily`). The description is then spoken as "According to <site>, ...". `sources` holds the page URL. | "This medicine isn't in our reviewed list. The following information comes from the web and hasn't been reviewed by our team." |
   | `general` | the model's general knowledge (fallback) | "Warning: this medicine isn't in our reviewed list, so this is general information only and may be inaccurate." |
+  | `brand` | only on `gave_up`: a listed brand whose strength can't be read, when all its approved products have the same ingredients, description and prescription status. Never speaks a strength. | "I can read Biogesic, but I can't read the strength, so I can't confirm exactly which product this is." |
 
   Consider a distinct sound or vibration for anything other than `reviewed`.
   For `reviewed` answers, `product` holds the dataset's spelling (not the

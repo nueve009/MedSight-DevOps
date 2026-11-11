@@ -5,6 +5,40 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-11 - Web answers in the console; give-up says what the brand is
+
+**Asked by Mon.**
+
+**Added**
+- `migrations/0007_web_answers_review.sql` (**not yet run; run it before deploying**).
+- Web answers keep the page text they were summarized from.
+- Console tab "Web answers": Reject, and Send to kb (pending product, passage and
+  missing ingredients in one transaction, never approved).
+- `brand` tier: on the give-up for an unread strength of a listed brand, say what
+  the brand is, only if all its approved products agree. Never a strength.
+- A strength read with confidence that a listed brand doesn't list is treated as
+  an unlisted product, instead of a rescan.
+
+**Decisions**
+- A web page alone can't back a reviewed medicine: the passage's source stays box,
+  insert, pnf or tfd. The page text is prefilled only for a TheFilipinoDoctor page.
+- No scan count in this version.
+- The web answer isn't retired on approval. The dataset match runs first, so the
+  reviewed answer wins, and the web answer is a fallback if the row is un-approved.
+- The fall-through needs a reported OCR confidence above the caveat threshold:
+  unknown isn't "clear", and the app sends `null` today, so until it reports one
+  this stays a rescan. A misread digit printed in the OCR text can't be detected;
+  the tier's warning covers it.
+
+**Checked:** tests, including the SQL as the review role on a throwaway local
+Postgres 18.
+
+**Not checked:** 0007 on real Supabase. The give-up needs the app on `/v2/identify`
+sending `attempt`; `/identify` always counts attempt 1. New spoken wording still
+needs a listen on the phone's text-to-speech.
+
+---
+
 ## 2026-11-10 - Import staging drafts as pending rows
 
 **Asked by Mon:** move the drafts in `kb/staging/` into Supabase for review in

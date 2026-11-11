@@ -45,6 +45,8 @@ reviewed dataset comes from Supabase, not from the build. Then:
 
 Migrations only add tables and columns, so the old build still works with the new schema.
 
+**Run a migration before the build that needs it.** The web-answers build writes `answers.page_text`, so `0007_web_answers_review.sql` goes first: `python -m scripts.migrate --check`, then `python -m scripts.migrate`. Without it, every new web answer fails to save and the store's circuit breaker skips the database for 60 seconds each time.
+
 ## 2. Remove or fix a bad answer
 
 A tester or user reports a wrong spoken answer. Admin routes need `ADMIN_ENABLED=on` on that service. Turn it on in Railway, and turn it back off afterwards on production.
