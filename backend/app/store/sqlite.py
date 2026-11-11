@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 );
 """
 # Columns added in M3; older local cache files get them on open.
-_ADDED_COLUMNS = {"status": "TEXT NOT NULL DEFAULT 'active'", "expires_at": "TEXT"}
+_ADDED_COLUMNS = {"status": "TEXT NOT NULL DEFAULT 'active'", "expires_at": "TEXT",
+                  "page_text": "TEXT NOT NULL DEFAULT ''"}
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -110,14 +111,14 @@ class SQLiteStore:
         return self._answer(row)
 
     def set_answer(self, cache_key: str, tier: str, product: dict, description: str, sources: list[str],
-                   status: str = "active") -> None:
+                   status: str = "active", page_text: str = "") -> None:
         check_answer(tier, status)
         created = now()
         with self._connect() as conn:
             conn.execute("INSERT OR REPLACE INTO answers (cache_key, tier, product, description, sources, "
-                         "cached_at, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                         "cached_at, status, expires_at, page_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (cache_key, tier, json.dumps(product), description, json.dumps(sources),
-                          created.isoformat(), status, _iso(expires_at(tier, created))))
+                          created.isoformat(), status, _iso(expires_at(tier, created)), page_text))
 
     def delete_answer(self, cache_key: str) -> bool:
         with self._connect() as conn:
@@ -165,9 +166,10 @@ class SQLiteStore:
             for r in rows:
                 check_answer(r["tier"], r["status"])
                 conn.execute("INSERT OR REPLACE INTO answers (cache_key, tier, product, description, sources, "
-                             "cached_at, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                             "cached_at, status, expires_at, page_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                              (r["cache_key"], r["tier"], json.dumps(r["product"]), r["description"],
-                              json.dumps(r["sources"]), r["cached_at"], r["status"], r.get("expires_at")))
+                              json.dumps(r["sources"]), r["cached_at"], r["status"], r.get("expires_at"),
+                              r.get("page_text", "")))
                 count += 1
         return count
 

@@ -141,7 +141,7 @@ def _web(product, key: str, cache: Store, record: dict, budget: Callable[[], Non
     else:
         stored = {**product.to_dict(), "rx": True} if found.rx else product.to_dict()
         _cache_call("set_answer", cache.set_answer, key, speech.WEB, stored, found.description,
-                    [found.source_url], "pending_review")
+                    [found.source_url], "pending_review", found.page_text)
     return found
 
 

@@ -117,6 +117,7 @@ class WebAnswer:
     source_url: str
     site_name: str
     rx: bool = False   # the chosen page says this product needs a prescription
+    page_text: str = ""   # what the summary was made from, for the review console
 
 
 def site_name(url: str) -> Optional[str]:
@@ -265,7 +266,7 @@ def lookup(product: ParsedProduct, record: dict, budget: Callable[[], None]) -> 
     record["web"] = "found"
     rx = model_says_rx and page_states_rx(chosen_text)
     record["web_rx"] = "yes" if rx else "model_only" if model_says_rx else "no"
-    return WebAnswer(description, url, site_name(url), rx=rx)
+    return WebAnswer(description, url, site_name(url), rx=rx, page_text=chosen_text)
 
 
 # --- "not found" markers ---

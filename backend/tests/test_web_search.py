@@ -106,6 +106,14 @@ def test_web_answer_is_cached_pending_review_and_shared(cache, web_on, fake_llm)
     assert len(web_on.queries) == 1 and fake_llm.count(SUMMARY) == 1
 
 
+def test_the_chosen_pages_text_is_saved_with_the_answer(cache, web_on, fake_llm):
+    other = SearchResult("https://hellodoctor.com.ph/biogesic", "Other", "Biogesic has paracetamol. Another page.")
+    web_on.results = [other, BIOGESIC_PAGE]
+    fake_llm.reply(SUMMARY, summary(source=2))
+    scan(cache)
+    assert cache.read_answer(BIOGESIC_KEY)["page_text"] == BIOGESIC_PAGE.text
+
+
 def test_expired_web_answer_is_searched_again(cache, web_on, fake_llm, monkeypatch):
     fake_llm.reply(SUMMARY, summary())
     monkeypatch.setattr(config, "WEB_ANSWER_TTL_DAYS", -1)   # written already expired
