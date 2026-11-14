@@ -55,39 +55,54 @@ export class ApiError extends Error {
 
 // ─── TRANSLATE: backend reply → what the screens use ───
 
+const STATUSES: IdentifyResponse["status"][] = [
+  "ok",
+  "ok_caveat",
+  "rescan",
+  "multiple",
+  "gave_up",
+];
+
 function isIdentifyResponse(data: unknown): data is IdentifyResponse {
   if (typeof data !== "object" || data === null) {
     return false;
   }
   const reply = data as Record<string, unknown>;
+  const product = reply.product as Record<string, unknown> | null | undefined;
   return (
-    (reply.status === "ok" ||
-      reply.status === "low_confidence" ||
-      reply.status === "rescan") &&
+    STATUSES.includes(reply.status as IdentifyResponse["status"]) &&
     typeof reply.spoken_text === "string" &&
-    typeof reply.grounded === "boolean"
+    // product is null, or has the two lists the name and strength come from.
+    (product == null ||
+      (Array.isArray(product.generics) && Array.isArray(product.strengths)))
   );
 }
 
 export function toScanResult(reply: IdentifyResponse): ScanResult {
+  const answered = reply.status === "ok" || reply.status === "ok_caveat";
+
   let status: ScanResult["status"];
-  if (reply.status === "rescan") {
+  if (!answered) {
+    // rescan, multiple or gave_up: no answer. The backend's spoken_text
+    // says why and what to do.
     status = "unreadable";
-  } else if (reply.grounded && reply.status === "ok") {
+  } else if (reply.status === "ok" && reply.tier === "reviewed") {
     // Safety: "verified" needs BOTH a clear reading and a match in the
-    // verified dataset. A shaky reading is never shown as verified.
+    // team-reviewed dataset. A shaky reading is never shown as verified.
     status = "verified";
   } else {
     status = "notVerified";
   }
 
+  // Combination products: "Ibuprofen + Paracetamol", "200 mg + 325 mg".
+  const product = answered ? reply.product : null;
   return {
     status,
-    name: reply.brand_name ?? reply.generic_name ?? undefined,
-    strength: reply.dosage ?? undefined,
+    name: product?.brand || product?.generics.join(" + ") || undefined,
+    strength: product?.strengths.join(" + ") || undefined,
     description: reply.description ?? undefined,
     spokenText: reply.spoken_text,
-    warnings: Array.isArray(reply.warnings) ? reply.warnings : [],
+    tier: reply.tier ?? undefined,
   };
 }
 
@@ -135,7 +150,7 @@ export async function identifyMedicine(
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/identify`, {
+    response = await fetch(`${API_BASE_URL}/v2/identify`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -143,8 +158,10 @@ export async function identifyMedicine(
       },
       body: JSON.stringify({
         text: ocrText.slice(0, MAX_TEXT_LENGTH),
-        lines: [],
+        blocks: [],
         ocr_confidence: null,
+        // Rescans of the same box aren't counted yet, so every scan is 1.
+        attempt: 1,
         platform: Platform.OS,
         app_version: APP_VERSION,
       }),

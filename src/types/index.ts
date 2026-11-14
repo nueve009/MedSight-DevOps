@@ -2,23 +2,35 @@
 // SHARED TYPES
 // ────────────────────────────────────────────
 
-// ─── What the backend sends (POST /identify) ───
-// Field names match the backend exactly. See the "API contract" section of
-// the MedSight-Backend README.
+// ─── What the backend sends (POST /v2/identify) ───
+// Field names match the backend exactly. See "API contract v2" in
+// backend/README.md.
+
+// Where the description comes from. Only "reviewed" is the team-checked
+// dataset; the others are spoken with a warning by the backend.
+export type AnswerTier = "reviewed" | "ingredient" | "web" | "general";
 
 export type IdentifyResponse = {
-  // How well the label was read.
-  status: "ok" | "low_confidence" | "rescan";
-  brand_name: string | null;
-  generic_name: string | null;
-  dosage: string | null;
+  // ok: answered. ok_caveat: answered, but the reading was shaky.
+  // rescan / multiple / gave_up: no answer; spoken_text says what to do.
+  status: "ok" | "ok_caveat" | "rescan" | "multiple" | "gave_up";
+  rescan_reason: string | null;
+  hint: "move_closer" | "more_light" | "turn_box" | null;
+  // null unless status is ok or ok_caveat.
+  tier: AnswerTier | null;
+  // null unless status is ok or ok_caveat. generics and strengths are
+  // paired by position (a combination product lists every ingredient).
+  product: {
+    brand: string | null;
+    generics: string[];
+    strengths: string[];
+    prescription: boolean;
+  } | null;
   description: string | null;
-  // true only when the medicine is in the backend's verified dataset.
-  grounded: boolean;
-  source_url: string | null;
-  warnings: string[];
+  sources: string[];
   // The exact sentence to read aloud. It already includes the safety warnings.
   spoken_text: string;
+  request_id: string | null;
   cache: "hit" | "miss" | null;
 };
 
@@ -35,7 +47,7 @@ export type ScanResult = {
   strength?: string; // e.g. "500mg"
   description?: string;
   spokenText: string;
-  warnings: string[];
+  tier?: AnswerTier; // where the description comes from, when answered
 };
 
 // ─── What is saved on the phone (see src/services/db.ts) ───

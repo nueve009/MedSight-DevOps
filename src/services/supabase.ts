@@ -21,10 +21,14 @@ import { AppState } from "react-native";
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  // Loud warning in dev; in production the queries will simply fail.
+// Without both values the app still runs: getUserId() returns null, so
+// history and My medicines are simply not saved.
+const SUPABASE_CONFIGURED = supabaseUrl !== "" && supabaseAnonKey !== "";
+
+if (!SUPABASE_CONFIGURED) {
   console.warn(
-    "[MedSight] Supabase env vars are not set.\n" +
+    "[MedSight] Supabase env vars are not set, so history and My medicines " +
+      "won't be saved.\n" +
       "Copy .env.example → .env.local and fill in:\n" +
       "  EXPO_PUBLIC_SUPABASE_URL\n" +
       "  EXPO_PUBLIC_SUPABASE_ANON_KEY\n" +
@@ -32,18 +36,24 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    // React Native has no window.localStorage; use AsyncStorage instead.
-    storage: AsyncStorage,
-    // Automatically refresh the session token before it expires.
-    autoRefreshToken: true,
-    // Keep the session across app restarts.
-    persistSession: true,
-    // Disable browser-based OAuth redirect detection (not needed on native).
-    detectSessionInUrl: false,
+// createClient throws on an empty URL, which would crash the whole app at
+// start-up. The placeholder is never called: getUserId() stops first.
+export const supabase = createClient(
+  SUPABASE_CONFIGURED ? supabaseUrl : "http://supabase.invalid",
+  SUPABASE_CONFIGURED ? supabaseAnonKey : "not-configured",
+  {
+    auth: {
+      // React Native has no window.localStorage; use AsyncStorage instead.
+      storage: AsyncStorage,
+      // Automatically refresh the session token before it expires.
+      autoRefreshToken: true,
+      // Keep the session across app restarts.
+      persistSession: true,
+      // Disable browser-based OAuth redirect detection (not needed on native).
+      detectSessionInUrl: false,
+    },
   },
-});
+);
 
 // Refresh the session token only while the app is in the foreground, as the
 // Supabase React Native guide recommends.
@@ -63,6 +73,9 @@ AppState.addEventListener("change", (state) => {
 let pendingSignIn: Promise<string | null> | null = null;
 
 export async function getUserId(): Promise<string | null> {
+  if (!SUPABASE_CONFIGURED) {
+    return null;
+  }
   const { data } = await supabase.auth.getSession();
   if (data.session) {
     return data.session.user.id;
