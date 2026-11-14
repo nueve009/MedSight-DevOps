@@ -128,6 +128,10 @@ def test_parse_pairs():
 
 def test_a_script_flooding_one_device_gets_429s_and_spends_no_llm_calls(client, fake_llm, monkeypatch):
     monkeypatch.setattr(config, "RATE_DEVICE_PER_MINUTE", 15)
+    # Halfway through a clock minute, and frozen: the limiter counts per clock
+    # minute, so a slow run (Postgres in CI) could otherwise cross into the next
+    # minute and see the count reset.
+    monkeypatch.setattr(client.app.state.limiter, "clock", lambda: 1_800_000_030.0)
     fake_llm.reply(PARSE, labels.reply(labels.BIOGESIC))
     fake_llm.reply(DESCRIBE, labels.GOOD_DESCRIPTION)
     codes = [post(client).status_code for _ in range(60)]
