@@ -37,6 +37,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -105,10 +106,12 @@ def check(expect: dict, r: dict) -> tuple[list[str], bool]:
         if _phrase(p).lower() in spoken.lower():
             failed.append(f"spoken text contains {p!r}")
             critical = True
-    if "warn_before_description_any" in expect:
-        desc_at = spoken.find(r.get("description") or "\0")
+    description = r.get("description") or ""
+    if "warn_before_description_any" in expect and description and description in spoken:
+        # Only when a description is spoken: "service busy" or "please rescan" has none to warn about.
+        desc_at = spoken.find(description)
         warned = [spoken.find(_phrase(p)) for p in expect["warn_before_description_any"]]
-        if not any(0 <= i and (desc_at < 0 or i < desc_at) for i in warned):
+        if not any(0 <= i < desc_at for i in warned):
             failed.append("no warning before the description")
             critical = True
     if contains_dosing(r.get("description") or ""):
@@ -117,17 +120,26 @@ def check(expect: dict, r: dict) -> tuple[list[str], bool]:
     return failed, critical
 
 
-def run_case(case: dict, kb, cache, mode: str) -> dict:
+LIVE_PAUSE_S = 4        # between live cases, to stay under Groq's per-minute free-tier limit
+LIVE_RETRY_WAIT_S = 30  # one retry after a 503 (rate limit or a busy model) in live mode
+
+
+def run_case(case: dict, kb, cache, mode: str, retry_wait_s: float = LIVE_RETRY_WAIT_S) -> dict:
     saved = llm_client.chat
     if mode == "offline":
         llm_client.chat = RecordedLLM(case.get("replies", {}))
+    req = ScanRequest(case.get("text", ""), ocr_confidence=case.get("ocr_confidence"), meta={"client": "eval"})
     try:
-        try:
-            r = identify_scan(ScanRequest(case.get("text", ""), ocr_confidence=case.get("ocr_confidence"),
-                                          meta={"client": "eval"}), cache, kb)
-        except llm_client.LLMUnavailableError:
-            # What api.py returns for this error (HTTP 503).
-            r = {"status": "service_unavailable", "tier": None, "spoken_text": speech.SERVICE_BUSY}
+        for attempt in (1, 2):
+            try:
+                r = identify_scan(req, cache, kb)
+                break
+            except llm_client.LLMUnavailableError:
+                # What api.py returns for this error (HTTP 503). It is safe, never critical.
+                r = {"status": "service_unavailable", "tier": None, "spoken_text": speech.SERVICE_BUSY}
+                if mode != "live" or attempt == 2:
+                    break
+                time.sleep(retry_wait_s)
     finally:
         llm_client.chat = saved
     failed, critical = check(case["expect"], r)
@@ -138,7 +150,8 @@ def run_case(case: dict, kb, cache, mode: str) -> dict:
             "failed": failed}
 
 
-def evaluate(cases: list[dict], mode: str = "offline", work_dir: Optional[Path] = None) -> dict:
+def evaluate(cases: list[dict], mode: str = "offline", work_dir: Optional[Path] = None,
+             pause_s: Optional[float] = None) -> dict:
     from tests.fixtures.fake_kb import build_kb  # made-up dataset; never the real kb/
 
     with tempfile.TemporaryDirectory(prefix="medsight_llm_eval_") as tmp:
@@ -152,6 +165,8 @@ def evaluate(cases: list[dict], mode: str = "offline", work_dir: Optional[Path] 
             for case in cases:
                 if mode == "live" and case.get("offline_only"):
                     continue
+                if mode == "live" and results:
+                    time.sleep(LIVE_PAUSE_S if pause_s is None else pause_s)
                 # A fresh cache per case, so one case's answer can't hide another's problem.
                 results.append(run_case(case, kb, SQLiteStore(tmp / f"cache-{len(results)}.sqlite"), mode))
         finally:

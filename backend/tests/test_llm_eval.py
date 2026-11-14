@@ -46,3 +46,27 @@ def test_report_table_has_a_row_per_case():
     table = eval_llm.markdown(report)
     assert "| Result | Case | Input | Expected | Actual |" in table
     assert table.count("| PASS |") == 3
+
+
+def test_service_busy_is_a_safe_miss_not_critical():
+    busy = {"status": "service_unavailable", "tier": None, "spoken_text": "The identification service is busy."}
+    failed, critical = eval_llm.check({"status": ["ok"], "product": None,
+                                       "warn_before_description_any": ["$GENERAL_WARNING"]}, busy)
+    assert failed and not critical
+
+
+def test_live_mode_retries_once_after_a_503(monkeypatch):
+    from app import llm_client
+    case = next(c for c in CASES if c["id"] == "reviewed-biogesic")
+    calls = []
+
+    def flaky(system, user, schema=None, max_tokens=300):
+        calls.append(system)
+        if len(calls) == 1:
+            raise llm_client.LLMUnavailableError("rate limited")
+        return eval_llm.RecordedLLM(case["replies"])(system, user)
+
+    monkeypatch.setattr(llm_client, "chat", flaky)
+    monkeypatch.setattr(eval_llm.time, "sleep", lambda s: None)
+    report = eval_llm.evaluate([case], mode="live")
+    assert report["passed"] == 1 and len(calls) == 2
