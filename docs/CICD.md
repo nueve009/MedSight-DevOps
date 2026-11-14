@@ -2,7 +2,7 @@
 
 How a change gets from a commit to a running app in this project, with the numbers and problems behind it.
 
-Path of a change: branch, pull request, checks pass, merge into `main`, Android build. A production build is started by hand and needs an approval.
+Path of a change: branch, pull request, checks pass, one teammate approves, merge into `main`, Android build. A production build is started by hand and needs an approval.
 
 ## Overview
 
@@ -10,10 +10,11 @@ Path of a change: branch, pull request, checks pass, merge into `main`, Android 
 | --------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------- |
 | Frontend checks       | Lint and type check on every pull request and every push to `main`                                          | `.github/workflows/ci.yml`             |
 | Backend checks        | ruff, pytest (also on a real Postgres), `kb/` data check, dependency audit, secret scan, Docker image build | `.github/workflows/backend-ci.yml`     |
-| Merge rules           | Pull request required, the `test`, `backend` and `secret-scan` checks must pass                             | Branch ruleset `protect-main`          |
+| Merge rules           | Pull request required, 1 approving review, the `test`, `backend` and `secret-scan` checks must pass         | Branch ruleset `protect-main`          |
 | Staging build (CD)    | After a merge, builds the Android `.apk` with Expo EAS Build (`preview` profile)                            | `.github/workflows/mobile-build.yml`   |
 | Production build (CD) | Started by hand, waits for an approval, then builds the `.apk` with the `production` profile                | `.github/workflows/mobile-release.yml` |
 | Dependency updates    | Weekly GitHub Actions updates                                                                               | `.github/dependabot.yml`               |
+| Release and rollback  | See the "Release and rollback" section                                                                      | -                                      |
 
 ## Continuous integration
 
@@ -57,11 +58,15 @@ The `backend` job starts a throwaway `postgres:16` container as a service and se
 Ruleset `protect-main`:
 
 - `main` needs a pull request and the `test`, `backend` and `secret-scan` checks to pass before merging
+- **Required approvals: 1** (changed from 0 on 2026-11-14). The author of a pull request cannot approve their own pull request, so another person with write access must approve it. Here that is the backend teammate (`rmndferrero`), who is a collaborator.
+- Code-owner review is not required. A second reviewer only for `kb/` changes was discussed and left off for now. It can be turned on in the ruleset later.
 - `docker-build` and CodeQL are not required checks
-- No approvals are required (0). Authors can merge their own pull request once the required checks pass, so the checks are the gate. A second reviewer for `kb/` changes (code-owner review) was discussed and left off for now, to keep merging simple for a small team. It can be turned on in the ruleset later.
-- Force pushes are blocked, and the bypass list is empty
+- Force pushes are blocked, and the bypass list is empty, so nobody can skip the rules, including the repository owner
 - Tested with a deliberately broken pull request (type error): the check failed and the merge was blocked
 - Tested again on PR #55: `secret-scan` failed on two gitleaks findings and the merge stayed blocked until it was resolved (see the security review log)
+- Tested the approval rule on 2026-11-14 with a test pull request: with no approval, the merge button was blocked and the merge box said an approving review is required (screenshot saved on that pull request, which was closed without merging)
+
+Why approvals are on: passing checks only shows that the code builds and the tests pass. A second person can catch wrong settings, risky changes or files that should not be committed, before they reach `main` and start a build.
 
 ## Environments and secrets
 
@@ -143,6 +148,61 @@ The cause: `eas build` reads `app.json` and loads its plugins from `node_modules
 - The Expo project belongs to one account (`nueve09`). Teammates need an invite on expo.dev to see the build page, or they can be sent the `.apk` file.
 - The workflows only build the app. Lint and type checks run in `ci.yml` before a merge.
 
+## Release and rollback
+
+### Release procedure
+
+Staging (automatic):
+
+1. Create a branch, make the change, push it, and open a pull request into `main`.
+2. Wait for the required checks (`test`, `backend`, `secret-scan`) to pass.
+3. A teammate reviews the pull request and approves it.
+4. Merge with a merge commit.
+5. `mobile-build.yml` starts by itself and builds the preview `.apk` (about 15-16 minutes). Merges that only change `backend/**`, `docs/**` or `.md` files start no build.
+6. Check the run in the Actions tab, then check that the build on expo.dev is for the same commit.
+
+Production (by hand, with an approval):
+
+1. Open Actions, then Mobile Release, then "Run workflow" on `main`.
+2. The run stops at "waiting for review" because of the `production` environment.
+3. The reviewer approves it and writes a comment. This is recorded on the run page.
+4. `mobile-release.yml` builds the `production` profile `.apk` (about 16 minutes in total in Mobile Release #2).
+5. Download the `.apk` from expo.dev, install it on an Android phone or emulator and open it to check that the app starts.
+
+### Rollback procedure
+
+There are two ways to go back to a working version. Neither has been tested yet (see "Rollback test" below).
+
+1. **Install an earlier build.** This is the fastest way, because it needs no new build. Open expo.dev, find the last good build, and install its `.apk`. Expo keeps each build for about 13 days, so an older `.apk` must be downloaded and saved before it expires.
+2. **Revert the change in Git.** On the merged pull request, click the "Revert" button. GitHub makes a new branch and a new pull request that undoes the change. That pull request needs the same checks and 1 approval as any other, because `main` is protected. After it is merged, `mobile-build.yml` builds a new staging `.apk` from the reverted code. For production, start Mobile Release again and approve it.
+
+Rules for both ways:
+
+- Never rewrite history on `main` (no force push, no reset). Force pushes are blocked, and the `.gitleaksignore` entries contain commit hashes, so rewriting history would break them.
+- Never delete the signing keystore on Expo's servers.
+- After a rollback, write what happened in this file.
+
+### Rollback test
+
+- Status: not tested yet
+- Plan: revert the pull request used in the recorded demo with the "Revert" button, merge the revert, and check that the new staging build starts and the app opens
+- Result: (to be filled in after the test: date, pull request numbers, run number, build time, and whether the app worked)
+
+## Optimizations
+
+What is already in place to keep the pipeline fast, safe and cheap:
+
+- **Skipped builds:** a merge that only changes `backend/**`, `docs/**` or `.md` files does not start a mobile build, which saves about 15 minutes of build time and one build from the Expo monthly limit.
+- **npm cache:** `actions/setup-node` caches the npm packages, so `npm ci` is faster on later runs.
+- **Cancel old runs:** `ci.yml` stops an older run when a newer push arrives on the same branch.
+- **One build at a time:** the mobile workflows use `concurrency` without cancelling a running build, so builds do not overlap and no build is lost. The cost is waiting: run #4 waited about 12 minutes for run #3.
+- **Timeouts:** 10 minutes for the frontend checks and 45 minutes for mobile builds, so a stuck job does not run for hours.
+- **Read-only permissions:** `contents: read` on the workflows, so a compromised step cannot change the code.
+- **Production only by hand:** the production build starts only from the manual button, so approval requests do not pile up on every merge.
+- **Backend checks in parallel:** `backend`, `secret-scan` and `docker-build` are separate jobs, so they run at the same time. The whole workflow takes about 1 minute.
+
+Measured result: the automatic staging runs took 14m 54s to 16m 20s. Most of that time is the Expo build itself (about 13-15 minutes), which the project does not control.
+
 ## Teacher's checklist mapped to the pipeline
 
 | Item              | What stands for it in MedSight                                                                                                                                                                                                                            |
@@ -166,7 +226,7 @@ A "deployment" here is a successful mobile build, which produces an installable 
 | Change failure rate   | 1 of 9 staging runs (11%) and 0 of 1 production releases. The failed run (#1) was a pipeline setup problem (packages not installed), not app code.                                                                                                                                                                                                                     |
 | Time to restore       | About 3 hours 40 minutes, from the failed run #1 to the end of the first green run (#2).                                                                                                                                                                                                                                                                               |
 
-The sample is small (10 builds in about 10 days), so these numbers show how the pipeline behaves, not a long-term trend.
+The sample is small (10 builds in about 10 days), so these numbers show how the pipeline behaves, not a long-term trend. Since Nov 14, every pull request also waits for a teammate's approval, so lead times from now on include the time until someone reviews.
 
 ### Hosting
 
@@ -216,11 +276,14 @@ The sample is small (10 builds in about 10 days), so these numbers show how the 
 - The dismissed Dependabot alerts are not fixed. The vulnerable packages are still in `package-lock.json`, and new alerts keep arriving for the same packages (21 for node-forge alone), so the cost of staying on SDK 57 grows over time. See the security review log.
 - The frontend has no tests, and no `build` or `test` script in the project, so CI checks style and types only
 - `docker-build` and CodeQL are not required checks, so a failure there does not block a merge. CodeQL alerts need a person to look at them.
+- Every pull request now needs an approval from a teammate. If the only reviewer is not available, merging waits, because nobody can bypass the rule.
 
 ## Not done yet
 
 - A first frontend test, which is the app team's decision
 - Setting up Railway (backend hosting) and finishing the Supabase staging project
+- A full approval test: a teammate approves a pull request and the merge button turns green (only the blocked side has been tested so far)
+- The rollback test (see "Rollback test")
 
 ## Security review log
 
@@ -272,7 +335,7 @@ The sample is small (10 builds in about 10 days), so these numbers show how the 
 - **Result:** after `main` was merged into the branch of PR #55, `secret-scan` passed on the pull request and on `main`.
 - **Why this was safe:** the values are fake test data, not credentials for any service.
 - **If it comes back:** open the summary table first. If a value looks like a real key, treat it as real, rotate it, and do not ignore it. The ignore entries contain the commit hash, so rebasing or squashing the branch would break them.
-- **Also noted:** PR #55 was merged by its author while the code-owner review requested from me was still pending. The ruleset does not require approvals, so this was allowed. Whether `kb/` changes should need a second reviewer is a team decision, and it was left as it is for now.
+- **Also noted:** PR #55 was merged by its author while the code-owner review requested from me was still pending. The ruleset did not require approvals at that time, so this was allowed. Since 2026-11-14 the ruleset requires 1 approval, so this can no longer happen. Whether `kb/` changes should also need a code-owner review is a team decision, and it was left as it is for now.
 
 ### 2026-11-11: nine new node-forge alerts (#24 to #32)
 
