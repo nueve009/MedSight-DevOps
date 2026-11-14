@@ -28,6 +28,44 @@ instead of web.
 
 ---
 
+## 2026-11-14 - Final checking: eval cases, test summary, /health, hosted review console
+
+**Asked by Mon:** build the backend deployment plan for the final project
+checking video (plan doc: "MedSight backend: final checking plan").
+
+- **LLM evaluation cases:** `kb/eval/llm_cases.jsonl` (21 cases) and
+  `scripts/eval_llm.py`. Offline mode replays recorded model replies, so it is
+  free and runs in CI (`tests/test_llm_eval.py` and a CI step that writes the
+  results table to the run page). Live mode calls Groq and skips the six
+  deliberately bad replies. Cases use the made-up dataset from
+  `tests/fixtures/fake_kb.py`, never `kb/`.
+- **Test summary:** `scripts/ci_test_summary.py` turns pytest's JUnit report
+  into a passed/failed/skipped table on the Actions run page.
+  `ops/backend-ci.yml` uses it and keeps both reports as artifacts;
+  `ops/llm-eval-live.yml` is a manual and weekly live run. The DevOps engineer
+  copies both into `.github/workflows/` (`ops/README.md`).
+- **`/health`** adds `cache_backend`, `database` (whether the cache answered)
+  and `commit` (Railway's `RAILWAY_GIT_COMMIT_SHA`), so a release can be checked
+  on screen. It still answers 200 with the database down.
+- **Hosted review console:** `app/review_service.py` serves only the review
+  routes and `/health`, with CORS for the hosted page, and refuses to start
+  without its settings, an https origin, or two-step sign-in.
+  `review/build.mjs` builds the page for Vercel from environment variables, and
+  `review/vercel.json` now sets the build and allows `*.up.railway.app` and
+  `*.supabase.co`. The Dockerfile picks the service with `APP_MODULE`.
+
+**Decisions**
+- The review page goes on Vercel and its API on a second Railway service
+  (Mon, 2026-11-14), so the CRUD demo uses the deployed console.
+- Live eval isn't a required check and doesn't run on PRs: it shares the Groq
+  free tier with the app.
+
+**Checked:** full test suite and ruff on a cloud copy of the branch; Vercel
+build script run with and without its variables. Not yet checked against the
+real Railway, Vercel and Supabase Auth.
+
+---
+
 ## 2026-11-11 - Web answers in the console; give-up says what the brand is
 
 **Asked by Mon.**

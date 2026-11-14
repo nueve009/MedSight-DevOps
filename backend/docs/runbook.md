@@ -38,6 +38,8 @@ reviewed dataset comes from Supabase, not from the build. Then:
 3. Promote the same build to production in Railway, and run the smoke test against production.
 4. Add a dated entry to `CHANGES.md`.
 
+After the deploy, `/health` shows the new `commit` and `"database": "ok"`.
+
 **Roll back:**
 
 1. Redeploy the previous build in Railway's Deployments tab. It's one click.
@@ -143,6 +145,13 @@ The console approves rows from a laptop with no deploy: `python -m scripts.revie
 | An approved row isn't being spoken | Check that its ingredients and an `indications` passage are approved too. The backend's log lists rows it dropped. |
 
 Table Editor approval stays on as a fallback until `kb_settings.allow_table_editor_approval` is set to false.
+
+**Hosting the console (Vercel page + a second Railway service):**
+
+1. Railway: in the same project, add a service from the same repo, root directory `backend`, watch paths `/backend/**`, healthcheck `/health`. Variables: `APP_MODULE=app.review_service:app`, `REVIEW_DATABASE_URL` (the `medsight_review_app` login, session pooler), `DATABASE_SSLMODE=require`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `REVIEW_ALLOWED_ORIGINS` (the Vercel URL, `https://...`, no trailing slash). Leave `REVIEW_REQUIRE_MFA` unset (on). The service refuses to start, and says why in its log, if any of these is missing. It serves only the review routes and `/health`: no scan API.
+2. Vercel: new project from the repo, root directory `backend/review`. `vercel.json` sets the build (`node build.mjs`), the output folder and the security headers. Environment variables: `REVIEW_SUPABASE_URL`, `REVIEW_SUPABASE_ANON_KEY`, `REVIEW_API_BASE` (the Railway review service URL). The build fails if one is missing.
+3. Put the Vercel URL in the review service's `REVIEW_ALLOWED_ORIGINS`, and redeploy it.
+4. Open the Vercel URL, sign in, and set up the authenticator.
 
 **Before the console is hosted (Vercel or anywhere else):**
 - [ ] Leave `REVIEW_REQUIRE_MFA` on for the hosted service (the default). The local launcher's "off" applies only to its own process.

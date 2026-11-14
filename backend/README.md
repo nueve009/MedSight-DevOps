@@ -307,7 +307,12 @@ Response (200):
   includes `"not verified"` (the value is unchanged for older app builds,
   although the spoken text now says "reviewed").
 
-`GET /health` returns `{"status": "ok", "llm_provider": "...", "kb_version": "...", "kb_products": 29}`.
+`GET /health` returns `{"status": "ok", "llm_provider": "...", "kb_version": "...", "kb_products": 29,
+"cache_backend": "postgres", "database": "ok", "web_search": "on", "commit": "7c2cfcb"}`.
+It answers 200 whenever the process is up, even with the database down
+(`"database": "unavailable"`), so a Supabase outage never fails a deploy's
+healthcheck. `commit` is the deployed git commit (Railway's
+`RAILWAY_GIT_COMMIT_SHA`), `null` when run elsewhere.
 `kb_version` is `null` and `kb_products` 0 when no reviewed dataset is loaded
 (no approved rows in Supabase, Supabase unreachable since startup, or no
 `data/kb.sqlite` locally): the service still runs, but every answer falls to
@@ -330,6 +335,26 @@ python -m scripts.kb_build --pull [--csv-out kb]         # approved rows -> data
 python -m scripts.kb_draft_descriptions                  # LLM drafts of spoken descriptions → kb/staging/
 python -m scripts.eval_kb --out report.json              # labeled scans: must give 0 wrong reviewed answers
 ```
+
+## LLM evaluation cases
+
+`kb/eval/llm_cases.jsonl` holds labeled cases for the AI part of the
+pipeline: label text, why the case matters, the model replies to use offline,
+and the acceptance criteria (status, tier, which reviewed product if any,
+phrases that must or must not be spoken, the warning before an unverified
+description, no dosing advice). They run against a made-up dataset, so the
+results don't depend on what reviewers have approved.
+
+```bash
+python -m scripts.eval_llm                   # offline: recorded replies, runs in CI on every PR
+python -m scripts.eval_llm --mode live       # the real model (LLM_PROVIDER); skips the bad-reply cases
+```
+
+Both print a table of input, expected and actual for each case (and add it to
+the GitHub Actions run page). Offline fails on any failed case; live fails
+only on a critical one: a reviewed answer for the wrong medicine, a missing
+warning, or dosing advice. These are typed label texts; the release gate of
+100 real phone scans is `eval_kb` above.
 
 **Request IDs:** every response has an `X-Request-Id` header. The app may
 send its own `X-Request-Id` (up to 64 letters, digits, `.`, `_` or `-`) and

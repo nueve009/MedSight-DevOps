@@ -1,4 +1,6 @@
 # Backend CI. Copy to .github/workflows/backend-ci.yml (see ops/README.md).
+# 2026-11-14: adds the test summary table, the JUnit and eval reports as run
+# artifacts, and the offline LLM evaluation cases.
 # Runs lint, tests, the kb/ check and a dependency audit for every PR that
 # touches backend/, plus a secret scan of the whole repo.
 name: Backend CI
@@ -24,9 +26,25 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A throwaway Postgres for tests/test_store.py. Those tests drop and
+    # re-create their tables, so never point this at a real database.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MEDSIGHT_TEST_DATABASE_URL: postgresql://postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -35,7 +53,24 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Tests
-        run: pytest
+        run: pytest --junitxml=pytest-report.xml
+      - name: Test summary
+        if: always() # show the counts on the run page even when tests fail
+        run: python -m scripts.ci_test_summary pytest-report.xml
+      - name: LLM evaluation cases (offline)
+        # Recorded model replies, so this is free and repeatable. The live run
+        # against Groq is llm-eval-live.yml.
+        if: always()
+        run: python -m scripts.eval_llm --out llm-eval-report.json
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: |
+            backend/pytest-report.xml
+            backend/llm-eval-report.json
+          if-no-files-found: ignore
       - name: Validate kb/
         # Remove --allow-empty once the team's first rows are merged, so an
         # empty or broken dataset fails CI.
@@ -49,9 +84,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0   # scan the full history, not only the last commit
-      - uses: gitleaks/gitleaks-action@v2
+          fetch-depth: 0 # scan the full history, not only the last commit
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Repos owned by a GitHub organization also need GITLEAKS_LICENSE
           # (free key from gitleaks.io). Personal-account repos don't.
+
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the backend image
+        run: docker build -t medsight-backend .

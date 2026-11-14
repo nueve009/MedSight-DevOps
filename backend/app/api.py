@@ -21,6 +21,7 @@ Every response carries an X-Request-Id header (the client's own, if it sent a
 valid one), and every log line for that request includes the same ID.
 """
 import logging
+import os
 import secrets
 import threading
 from contextlib import asynccontextmanager, contextmanager
@@ -31,7 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app import admin, config, review, speech
+from app import admin, config, review, speech, web_search
 from app.kb_source import KBRefresher, kb_conninfo, load_from_postgres
 from app.llm_client import LLMUnavailableError
 from app.logging_setup import RequestIdMiddleware, configure_logging, request_id_var
@@ -247,9 +248,19 @@ def _service_busy(e: LLMUnavailableError) -> JSONResponse:
 
 @app.get("/health")
 def health(request: Request) -> dict:
+    """Always 200 while the process is up, so a database outage never fails a
+    deploy's healthcheck (scans fail open too). "database" says whether the cache
+    answered; "commit" is the git commit Railway deployed, for checking a release."""
     kb = request.app.state.kb
+    try:
+        request.app.state.cache.get_parse("health-check")
+        database = "ok"
+    except Exception:   # noqa: BLE001 - any store error means "not reachable right now"
+        database = "unavailable"
     return {"status": "ok", "llm_provider": config.LLM_PROVIDER, "kb_version": kb.version,
-            "kb_products": len(kb.products)}
+            "kb_products": len(kb.products), "cache_backend": config.CACHE_BACKEND, "database": database,
+            "web_search": "on" if web_search.enabled() else "off",
+            "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7] or None}
 
 
 # --- v2 ---
