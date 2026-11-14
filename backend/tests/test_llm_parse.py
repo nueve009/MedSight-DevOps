@@ -51,9 +51,21 @@ def test_no_products_is_valid_but_empty(fake_llm):
     json.dumps({"products": [{"brand_name": "ZORBAXIL", "generic_names": ["500 mg"], "strengths": ["500 mg"]}],
                 "confidence": 1}),
     json.dumps([labels.BIOGESIC]),
+    # Strengths with a hyphen are still strengths, not chemical names
+    json.dumps({"products": [{"brand_name": "X", "generic_names": ["500-mg"], "strengths": [""]}], "confidence": 1}),
+    json.dumps({"products": [{"brand_name": "X", "generic_names": ["10-20 mg"], "strengths": [""]}], "confidence": 1}),
 ])
 def test_invalid_replies_are_rejected(fake_llm, reply):
     assert parse_with(fake_llm, reply).valid is False
+
+
+@pytest.mark.parametrize("name", ["2,4-Dichlorobenzyl alcohol", "5-Fluorouracil", "4-Aminophenol"])
+def test_a_chemical_name_may_start_with_a_locant(fake_llm, name):
+    """Strepsils lists 2,4-Dichlorobenzyl alcohol; the whole label used to be thrown away."""
+    result = parse_with(fake_llm, labels.reply(labels.product("Strepsils", ["Amylmetacresol", name],
+                                                              ["0.6 mg", "1.2 mg"])))
+    assert result.valid
+    assert result.products == [ParsedProduct("Strepsils", ("Amylmetacresol", name), ("0.6 mg", "1.2 mg"))]
 
 
 def test_ocr_text_is_fenced_and_cannot_close_the_fence(fake_llm):

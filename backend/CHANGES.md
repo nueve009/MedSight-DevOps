@@ -5,6 +5,29 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-14 - Two web-tier bugs found in the live Tavily test
+
+**Asked by Mon.** A live test (real Tavily and Groq, temp data folder) of an unlisted
+product, Strepsils, got a rescan, and without the "2,4-" it got the general tier
+instead of web.
+
+**Fixed**
+- `llm_parse._validate` threw away the whole reply when an ingredient name started
+  with a digit, so "2,4-Dichlorobenzyl alcohol" became rescan `no_name`. A leading
+  chemical locant ("2,4-", "5-") is now allowed; a strength in the ingredient slot
+  ("500 mg", "500-mg", "10-20 mg") is still rejected.
+- `web_search.lookup` cut each page to `MAX_SOURCE_CHARS` before checking that it
+  names the brand and every ingredient. Hello Doctor's Strepsils page names the
+  ingredients past character 5,300, so every page was dropped. A long page now
+  keeps its start (`EXCERPT_HEAD_CHARS`) plus the text from just before the first
+  ingredient mention, still at most `MAX_SOURCE_CHARS`; the gate and the model see
+  the same excerpt, so the model never gets less than the gate checked.
+
+**Checked:** the new tests fail on the old code. `pytest`: 710 passed, 90 skipped
+(Postgres-only). `ruff check` clean.
+
+---
+
 ## 2026-11-11 - Web answers in the console; give-up says what the brand is
 
 **Asked by Mon.**

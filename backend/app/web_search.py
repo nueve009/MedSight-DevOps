@@ -46,6 +46,9 @@ ALLOWED_SITES = {
 
 MAX_SOURCES = 2              # page texts sent to the model
 MAX_SOURCE_CHARS = 4000      # per page, after whitespace is collapsed
+EXCERPT_HEAD_CHARS = 1000    # a long page keeps its start (title, brand) ...
+EXCERPT_LEAD_CHARS = 300     # ... and the text from just before the first ingredient mention
+EXCERPT_GAP = " … "
 MAX_DESCRIPTION_CHARS = 300
 TAVILY_URL = "https://api.tavily.com/search"
 
@@ -199,6 +202,32 @@ def _source_ok(text: str, product: ParsedProduct) -> bool:
     return _mentions_brand(text, product.brand) and all(_mentions_ingredient(words, g) for g in product.generics)
 
 
+def _first_mention(text: str, ingredient: str) -> int:
+    """Where the page first names the ingredient (its main word or another name), or -1."""
+    tokens = name_key(ingredient).split()
+    if not tokens:
+        return -1
+    main = max(tokens, key=len)
+    found = [m.start() for word in (main, *_ALSO_CALLED.get(main, ()))
+             if (m := re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE))]
+    return min(found) if found else -1
+
+
+def _excerpt(text: str, product: ParsedProduct) -> str:
+    """At most MAX_SOURCE_CHARS of the page for the gate and the model. A long page
+    (Hello Doctor lists the ingredients past 5,000 characters) keeps its start,
+    where the brand is, plus the part from the first ingredient mention on."""
+    head = text[:MAX_SOURCE_CHARS]
+    if len(text) <= MAX_SOURCE_CHARS or _source_ok(head, product):
+        return head
+    mentions = [_first_mention(text, g) for g in product.generics]
+    if not mentions or min(mentions) < 0:
+        return head   # an ingredient isn't on the page at all: the gate drops it
+    start = max(EXCERPT_HEAD_CHARS, min(mentions) - EXCERPT_LEAD_CHARS)
+    tail = MAX_SOURCE_CHARS - EXCERPT_HEAD_CHARS - len(EXCERPT_GAP)
+    return text[:EXCERPT_HEAD_CHARS] + EXCERPT_GAP + text[start:start + tail]
+
+
 def _description_ok(description: str, product: ParsedProduct) -> bool:
     if not description or len(description) > MAX_DESCRIPTION_CHARS or contains_dosing(description):
         return False
@@ -230,7 +259,7 @@ def lookup(product: ParsedProduct, record: dict, budget: Callable[[], None]) -> 
         if site_name(r.url) is None:   # the provider's domain filter is not trusted on its own
             log.warning("web result outside the allowlist dropped", extra={"fields": {"url": r.url[:100]}})
             continue
-        text = " ".join(r.text.split())[:MAX_SOURCE_CHARS]
+        text = _excerpt(" ".join(r.text.split()), product)
         if _source_ok(text, product):
             sources.append((r, text))
         if len(sources) == MAX_SOURCES:

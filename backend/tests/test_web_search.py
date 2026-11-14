@@ -259,6 +259,32 @@ def test_a_page_missing_one_ingredient_of_a_combination_is_not_used(cache, web_o
     assert fake_llm.count(SUMMARY) == 0
 
 
+def test_a_long_page_that_names_the_ingredients_late_is_used(cache, web_on, fake_llm):
+    """Hello Doctor's Strepsils page names the ingredients past character 5,000;
+    the gate used to see only the first 4,000 and dropped every such page."""
+    fake_llm.reply(PARSE, labels.reply(labels.product("Alaxan FR", ["Ibuprofen", "Paracetamol"],
+                                                      ["200 mg", "325 mg"])))
+    page = ("Alaxan FR is a pain reliever. " + "General health reading. " * 250
+            + "Active ingredients: ibuprofen 200 mg and paracetamol 325 mg. " + "More reading. " * 100)
+    assert page.index("ibuprofen") > web_search.MAX_SOURCE_CHARS
+    web_on.results = [SearchResult(TFD, "Alaxan FR", page)]
+    fake_llm.reply(SUMMARY, summary(description="Relieves pain; it contains ibuprofen and paracetamol."))
+    assert scan(cache, text=labels.ALAXAN_TEXT)["tier"] == "web"
+    sent = next(c["user"] for c in fake_llm.calls if c["system"] == SUMMARY).split("<source_1>")[1]
+    sent = sent.split("</source_1>")[0]
+    assert "Alaxan FR is a pain reliever" in sent and "ibuprofen 200 mg and paracetamol 325 mg" in sent
+    assert len(sent) <= web_search.MAX_SOURCE_CHARS + len("Alaxan FR") + 3
+
+
+def test_a_long_page_that_never_names_an_ingredient_is_still_dropped(cache, web_on, fake_llm):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Alaxan FR", ["Ibuprofen", "Paracetamol"],
+                                                      ["200 mg", "325 mg"])))
+    page = "Alaxan FR is a pain reliever. " + "General health reading. " * 250 + "It contains ibuprofen."
+    web_on.results = [SearchResult(TFD, "Alaxan FR", page)]
+    assert scan(cache, text=labels.ALAXAN_TEXT)["tier"] == "general"
+    assert fake_llm.count(SUMMARY) == 0
+
+
 def test_another_name_for_an_ingredient_counts(cache, web_on, fake_llm):
     web_on.results = [SearchResult(TFD, "Biogesic", "Biogesic (acetaminophen) relieves pain and fever.")]
     fake_llm.reply(SUMMARY, summary(description="Relieves pain and fever."))
