@@ -13,12 +13,13 @@ Design mockups: `Sample UI/MedSight Screens.pdf`.
 - **All 8 screens are built** from the PDF: Scan, Checking, Result (verified / not verified), Offline, History, Settings, My medicines, plus a Voice picker (not in the PDF). 
 - **The scan flow is connected: Scan → Checking → Result (or Offline).** Scan checks the connection, Checking calls `identifyMedicine()` in `src/services/api.ts`, and the reply decides the screen. Cancel on Checking cancels the request.
 - **The app runs in mock mode until a backend URL is set** in `.env.local` (copy `.env.example`). Mock mode cycles through three fake replies: not verified, verified, unreadable.
-- **Live camera, but no OCR yet.** The Scan screen shows the back camera (`expo-camera` `CameraView`) and asks for camera permission ("Allow camera" button, spoken message). The Scan button does not take a photo yet: every scan sends the same sample label text from `src/services/ocr.ts`. The backend expects the phone to read the label text (OCR) and send only the text; that needs a development build, not Expo Go.
+- **Live camera with on-device OCR** (branch `feature/phone-ocr`, being tested on a phone). The Scan screen shows the back camera (`expo-camera` `CameraView`) and asks for camera permission ("Allow camera" button, spoken message). Scan takes a photo, `readLabelText()` in `src/services/ocr.ts` reads its text on the phone with `expo-text-extractor` (Google ML Kit on Android, Apple Vision on iOS), and only the text goes to the backend. Taps while a scan is running are ignored. **OCR needs a development build** (`expo-dev-client`, `eas.json` profile `development`, or locally `npx expo prebuild -p android` then `gradlew assembleDebug`). In Expo Go and on the web the native module is missing, so scans fall back to a sample Biogesic label.
+- Without `EXPO_PUBLIC_SUPABASE_URL` / `_ANON_KEY` the app still starts; history and My medicines are just not saved.
 - Result reads its data from route params (`status`: `verified` / `notVerified` / `unreadable`, `name`, `strength`, optional `form`, `onList`, `doseNote`, `spokenText`). It speaks the backend's `spokenText` when present. "Verified" shows only when the backend says the label was read clearly **and** the medicine is in its verified dataset.
 - Offline also shows server problems (`reason=server` param): different words and a warning icon.
 - Settings live in `SettingsContext` (**in memory only, reset on restart**). Speech speed and Voice are used by `useSpeech`. Vibration and High contrast are stored but nothing reads them yet.
 - **History and My medicines are stored in Supabase** (`src/services/db.ts` + `src/services/supabase.ts`). Every scan is saved remotely (newest 50 per device). On My medicines a caregiver can add a medicine (name + optional dose note) and remove one (with a confirmation). Settings shows the real saved count. When a scanned medicine's name matches a saved one, Result gets `onList` and the dose note. Each install **signs in anonymously** to Supabase (no login screen; `getUserId()` in `src/services/supabase.ts`) and every row carries that user ID. Row-level security lets each install read and write only its own rows; the rules are in `supabase/anon_auth_rls.sql`, run once in the Supabase SQL editor after turning on anonymous sign-ins.
-- Backend: separate repo (`MedSight-Backend`, FastAPI). `POST /identify` takes OCR text and returns the identification plus `spoken_text`. Its verified dataset is still empty, so the real backend currently answers "not verified" for every medicine.
+- Backend: FastAPI in `backend/`. **The app uses `POST /v2/identify`** (contract v2 in `backend/README.md`): it sends the OCR text and gets back `status`, `tier`, `product` and `spoken_text`. `api.ts` maps the reply to the app's statuses: `ok` + tier `reviewed` → verified; `ok` with another tier, or `ok_caveat` → not verified; `rescan` / `multiple` / `gave_up` → unreadable (the backend's spoken text says what to do). Not sent yet: `X-Device-Id`, OCR `blocks`, real `attempt` counts, `capture_hints`. The old `POST /identify` (v1) still exists on the backend but the app no longer calls it.
 
 ## Reusable building blocks — use these, don't make new ones
 
@@ -44,7 +45,7 @@ Design mockups: `Sample UI/MedSight Screens.pdf`.
 | `src/hooks/useSpeech.ts` | Speaks text with the saved voice and speed. `speak` and `stop` are stable, safe in effect dependencies | `const { speak, stop } = useSpeech(); speak(text)` · never call `expo-speech` directly in screens |
 | `src/services/api.ts` | The **only** file that talks to the backend. `identifyMedicine(text, signal)` returns a `ScanResult`; failures are thrown as `ApiError` with a `kind` (`network`, `timeout`, `server`, `cancelled`) | `const result = await identifyMedicine(text, controller.signal)` · never call `fetch` in a screen |
 | `src/types/index.ts` | Shared types: `IdentifyResponse` (the backend's reply), `ScanResult` and `ScanStatus` (what screens use) | `import { ScanResult } from "@/types"` |
-| `src/services/ocr.ts` | `readLabelText()`: returns the text on the medicine box. **Temporary**: returns a sample label until real OCR is added | `const text = await readLabelText()` |
+| `src/services/ocr.ts` | `readLabelText(photoUri)`: reads the text on the medicine box in a photo, on the phone. Returns `""` when nothing is found. `OCR_AVAILABLE` is false in Expo Go and on the web, where it returns a sample label | `const text = await readLabelText(photo.uri)` |
 | `src/services/mockData.ts` | Fake backend replies for mock mode | used only by `api.ts` |
 | `src/services/db.ts` | History and My medicines in Supabase, for the signed-in (anonymous) user: `addHistory`, `getHistory`, `getMyMedicines`, `addMyMedicine`, `deleteMyMedicine`, `findMyMedicine`, `countMyMedicines`. Each returns an empty result when signing in fails (e.g. offline) | `const items = await getHistory()` · never query Supabase in a screen |
 | `src/services/supabase.ts` | The shared Supabase client and `getUserId()`, which signs in anonymously once per install | used only by `db.ts` |
@@ -76,7 +77,7 @@ Design mockups: `Sample UI/MedSight Screens.pdf`.
 | 1 | Foundation: clean project, `theme.ts`, `AppText`, `Screen`, `Icon`, buttons, empty screens | ✅ Done |
 | 2 | More components: `InfoCard`, `StatusBanner`, `GuidancePill`, `ScanFrame`, `ListRow` (+ `HistoryRow`) | ✅ Done |
 | 3 | Settings + feedback: `ToggleRow`, `SegmentedControl`, `SettingsContext`, speech | 🟡 In progress (components, context and `useSpeech` done; haptics via `feedback.ts` respecting Vibration, saving settings, and High contrast still to do) |
-| 4 | Scan → Checking → Result (mock API) | 🟡 In progress (flow connected through `api.ts` with mock and real modes, tested against the real backend; live camera added; photo capture and OCR still to do) |
+| 4 | Scan → Checking → Result (mock API) | 🟡 In progress (flow connected through `api.ts` with mock and real modes, tested against the real backend; live camera added; photo capture and on-device OCR added, being tested on a phone) |
 | 5 | Offline + errors | 🟡 In progress (Scan routes to Offline when there is no internet; network, timeout and server errors are handled; not yet tested against the real backend) |
 | 6 | History | ✅ Done (scans saved to Supabase; newest 50 per device; rows listed newest-first) |
 | 7 | My medicines (caregiver) | ✅ Done (add and remove work, stored in Supabase; no editing yet) |
@@ -104,7 +105,7 @@ This plan was made before the CSP221A project guide. It still needs to be checke
 ## Up next
 - **Supabase setup**: run the SQL in `supabase_schema.md` (via the Supabase dashboard SQL Editor), then add `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` to `.env.local` and restart the dev server
 - Test against the real FastAPI backend: set `EXPO_PUBLIC_API_BASE_URL` in `.env.local` once it is running or deployed
-- Take the photo on Scan and run real OCR inside `readLabelText()` in `src/services/ocr.ts` (needs a development build, not Expo Go)
+- Test OCR on real boxes; then consider sending OCR `blocks` with positions to `/v2/identify` (needs an OCR library that returns boxes) and counting `attempt` for rescans of the same box
 - Show the backend's medicine name and description on the Not verified screen? Today it is only spoken
 - `feedback.ts`: haptic patterns for verified / not verified, respecting the Vibration setting (the button haptics also ignore it today)
 - Save settings so they survive an app restart; apply High contrast

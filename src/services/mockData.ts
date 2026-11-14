@@ -3,53 +3,63 @@ import { IdentifyResponse } from "@/types";
 // ────────────────────────────────────────────
 // MOCK DATA
 // ────────────────────────────────────────────
-// Fake backend replies, in the backend's own shape, used when no backend
-// URL is set (see api.ts). Each scan returns the next one in the list, so
-// every result screen can be demoed without a server.
+// Fake backend replies, in the backend's own shape (API contract v2), used
+// when no backend URL is set (see api.ts). Each scan returns the next one in
+// the list, so every result screen can be demoed without a server.
 //
 // Synthetic content only. These are not real medical instructions.
 
 const MOCK_RESPONSES: IdentifyResponse[] = [
-  // 1. Read clearly, but not in the verified dataset. This is what the real
-  //    backend returns for every medicine until its dataset is filled in.
+  // 1. Read clearly, but not in the reviewed dataset (general knowledge).
   {
     status: "ok",
-    brand_name: "Biogesic",
-    generic_name: "Paracetamol",
-    dosage: "500mg",
+    rescan_reason: null,
+    hint: null,
+    tier: "general",
+    product: {
+      brand: "Biogesic",
+      generics: ["Paracetamol"],
+      strengths: ["500 mg"],
+      prescription: false,
+    },
     description: "[General description written by the backend]",
-    grounded: false,
-    source_url: null,
-    warnings: ["not verified"],
+    sources: [],
     spoken_text:
-      "Biogesic. Warning: this medicine is not in my verified list, so this is general information only and may be inaccurate. [General description written by the backend]. Please check the label or ask a pharmacist before taking it.",
+      "Biogesic, Paracetamol 500 milligrams. Warning: this medicine isn't in our reviewed list, so this is general information only and may be inaccurate. [General description written by the backend].",
+    request_id: null,
     cache: "miss",
   },
-  // 2. Read clearly and found in the verified dataset.
+  // 2. Read clearly and found in the team-reviewed dataset.
   {
     status: "ok",
-    brand_name: "Biogesic",
-    generic_name: "Paracetamol",
-    dosage: "500mg",
-    description: "[Verified description from the dataset]",
-    grounded: true,
-    source_url: null,
-    warnings: [],
-    spoken_text: "Biogesic. [Verified description from the dataset].",
-    cache: "hit",
+    rescan_reason: null,
+    hint: null,
+    tier: "reviewed",
+    product: {
+      brand: "Biogesic",
+      generics: ["Paracetamol"],
+      strengths: ["500 mg"],
+      prescription: false,
+    },
+    description: "[Reviewed description from the dataset]",
+    sources: [],
+    spoken_text:
+      "Biogesic, Paracetamol 500 milligrams. Our team has reviewed this information. [Reviewed description from the dataset].",
+    request_id: null,
+    cache: null,
   },
   // 3. Nothing readable on the box.
   {
     status: "rescan",
-    brand_name: null,
-    generic_name: null,
-    dosage: null,
+    rescan_reason: "no_text",
+    hint: "more_light",
+    tier: null,
+    product: null,
     description: null,
-    grounded: false,
-    source_url: null,
-    warnings: [],
+    sources: [],
     spoken_text:
-      "I couldn't read any text on that packaging. Please try again with better lighting or a closer shot.",
+      "I couldn't read any text on that packaging. Please try again with more light.",
+    request_id: null,
     cache: null,
   },
 ];

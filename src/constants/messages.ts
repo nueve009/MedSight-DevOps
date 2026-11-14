@@ -51,6 +51,11 @@ export const messages = {
     hint: "Hold the box inside the frame",
     scanButton: "Scan",
     scanButtonHint: "Takes a photo of the medicine box",
+    // While the photo is taken and its text is read on the phone.
+    reading: "Reading…",
+    readingSpoken: "Reading the label. Hold still.",
+    cameraNotReady: "The camera is still starting. Please try again.",
+    readFailed: "I couldn't take the photo. Please try again.",
     // Shown instead of the camera until the user allows camera access.
     cameraNeededTitle: cameraNeededTitle,
     cameraNeededBody: cameraNeededBody,

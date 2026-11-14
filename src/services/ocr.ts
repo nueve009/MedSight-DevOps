@@ -1,13 +1,28 @@
+import { requireOptionalNativeModule } from "expo";
+import { Platform } from "react-native";
+
 // ────────────────────────────────────────────
 // OCR (reading the text on the medicine box)
 // ────────────────────────────────────────────
-// TEMPORARY STAND-IN. The backend expects the phone to read the label text
-// itself and send only the text. Until on-device OCR is added (it needs a
-// development build, not Expo Go), every scan "reads" this sample label so
-// the rest of the flow can be built and tested.
+// Reads the text in a photo on the phone itself (expo-text-extractor: Google
+// ML Kit on Android, Apple Vision on iOS). The backend only gets the text,
+// never the photo.
 //
-// To finish this: take the photo with expo-camera, run OCR on it, and return
-// the recognized text from readLabelText(). Nothing else has to change.
+// The native module only exists in a development or release build. In Expo
+// Go and on the web it is missing, so every scan falls back to a sample
+// label and the rest of the app can still be demoed there.
+
+type TextExtractorModule = {
+  // One string per block of text found in the picture.
+  extractTextFromImage: (path: string) => Promise<string[]>;
+};
+
+// Loaded this way (not with `import`) so Expo Go and the web don't crash.
+const extractor =
+  requireOptionalNativeModule<TextExtractorModule>("ExpoTextExtractor");
+
+// false in Expo Go and on the web: scans use the sample label.
+export const OCR_AVAILABLE = extractor !== null;
 
 const SAMPLE_LABEL_TEXT = [
   "BIOGESIC",
@@ -16,6 +31,22 @@ const SAMPLE_LABEL_TEXT = [
   "Analgesic / Antipyretic",
 ].join("\n");
 
-export async function readLabelText(): Promise<string> {
-  return SAMPLE_LABEL_TEXT;
+// Returns the text on the medicine box in the photo, one block per line.
+// An empty string means no text was found; the backend then asks for a
+// rescan with a spoken hint.
+export async function readLabelText(photoUri: string): Promise<string> {
+  if (!extractor) {
+    return SAMPLE_LABEL_TEXT;
+  }
+
+  // The Android module opens the image as a plain file path and fails on
+  // "file://…" URIs. iOS takes a URL, so it keeps the prefix.
+  const path =
+    Platform.OS === "android" ? photoUri.replace(/^file:\/\//, "") : photoUri;
+
+  const blocks = await extractor.extractTextFromImage(path);
+  return blocks
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .join("\n");
 }

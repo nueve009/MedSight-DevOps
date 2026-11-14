@@ -11,8 +11,8 @@ import { readLabelText } from "@/services/ocr";
 import { colors, radii, spacing } from "@/theme/theme";
 import NetInfo from "@react-native-community/netinfo";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { router, useIsFocused } from "expo-router";
-import { useEffect } from "react";
+import { router, useFocusEffect, useIsFocused } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Linking, StyleSheet, View } from "react-native";
 // import { Pressable, StyleSheet, Text, View } from "react-native"; //for testing only (REPLACEMENT FOR ABOVE ROW); delete/comment out before commit
 
@@ -24,6 +24,21 @@ export default function ScanScreen() {
   // The camera only runs while this screen is the one on top.
   const isFocused = useIsFocused();
   const { speak, stop } = useSpeech();
+
+  const cameraRef = useRef<CameraView>(null);
+  // The camera can't take a photo until onCameraReady fires. It turns off
+  // when another screen opens, so it must report ready again after that.
+  const [cameraReady, setCameraReady] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      return () => setCameraReady(false);
+    }, []),
+  );
+
+  // true while a photo is taken and read. A ref, so a quick double tap
+  // can't start two scans before the screen re-renders.
+  const busy = useRef(false);
+  const [reading, setReading] = useState(false);
 
   // Tell the user out loud why there is no camera yet.
   useEffect(() => {
@@ -49,18 +64,39 @@ export default function ScanScreen() {
   }
 
   async function handleScan() {
-    // No internet: go straight to the Offline screen instead of waiting.
-    const state = await NetInfo.fetch();
-    const online =
-      state.isConnected === true && state.isInternetReachable !== false;
-    if (!online) {
-      router.push("/offline");
+    if (busy.current) {
       return;
     }
+    busy.current = true;
 
-    // TODO: take the photo and run real OCR (see src/services/ocr.ts).
-    const text = await readLabelText();
-    router.push({ pathname: "/checking", params: { text } });
+    try {
+      // No internet: go straight to the Offline screen instead of waiting.
+      const state = await NetInfo.fetch();
+      const online =
+        state.isConnected === true && state.isInternetReachable !== false;
+      if (!online) {
+        router.push("/offline");
+        return;
+      }
+
+      const camera = cameraRef.current;
+      if (!camera || !cameraReady) {
+        speak(messages.scan.cameraNotReady);
+        return;
+      }
+
+      setReading(true);
+      speak(messages.scan.readingSpoken);
+      // Take the photo, then read its text on the phone (src/services/ocr.ts).
+      const photo = await camera.takePictureAsync({ quality: 0.8 });
+      const text = await readLabelText(photo.uri);
+      router.push({ pathname: "/checking", params: { text } });
+    } catch {
+      speak(messages.scan.readFailed);
+    } finally {
+      busy.current = false;
+      setReading(false);
+    }
   }
 
   return (
@@ -121,7 +157,12 @@ export default function ScanScreen() {
         {/* The live camera fills the card. CameraView can't have children,
             so the text, frame and hint are drawn on top of it. */}
         {cameraAllowed && isFocused ? (
-          <CameraView style={StyleSheet.absoluteFill} facing="back" />
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            onCameraReady={() => setCameraReady(true)}
+          />
         ) : null}
 
         {cameraRefused ? (
@@ -168,7 +209,7 @@ export default function ScanScreen() {
         />
       ) : (
         <PrimaryButton
-          label={messages.scan.scanButton}
+          label={reading ? messages.scan.reading : messages.scan.scanButton}
           icon="camera"
           onPress={handleScan}
           accessibilityHint={messages.scan.scanButtonHint}
