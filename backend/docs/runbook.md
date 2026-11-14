@@ -148,13 +148,15 @@ Table Editor approval stays on as a fallback until `kb_settings.allow_table_edit
 
 **Hosting the console (Vercel page + a second Railway service):**
 
-1. Railway: in the same project, add a service from the same repo, root directory `backend`, watch paths `/backend/**`, healthcheck `/health`. Variables: `APP_MODULE=app.review_service:app`, `REVIEW_DATABASE_URL` (the `medsight_review_app` login, session pooler), `DATABASE_SSLMODE=require`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `REVIEW_ALLOWED_ORIGINS` (the Vercel URL, `https://...`, no trailing slash). Leave `REVIEW_REQUIRE_MFA` unset (on). The service refuses to start, and says why in its log, if any of these is missing. It serves only the review routes and `/health`: no scan API.
-2. Vercel: new project from the repo, root directory `backend/review`. `vercel.json` sets the build (`node build.mjs`), the output folder and the security headers. Environment variables: `REVIEW_SUPABASE_URL`, `REVIEW_SUPABASE_ANON_KEY`, `REVIEW_API_BASE` (the Railway review service URL). The build fails if one is missing.
+1. Railway: in the same project, add a service from the same repo, root directory `backend`, watch paths `/backend/**`, healthcheck `/health`. Variables: `APP_MODULE=app.review_service:app`, `REVIEW_DATABASE_URL` (the `medsight_review_app` login, session pooler), `DATABASE_SSLMODE=require`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `REVIEW_ALLOWED_ORIGINS` (the Vercel URL, `https://...`, no trailing slash). Two-step sign-in follows `REVIEW_REQUIRE_MFA` (unset = on; `off` for the demo, see below). The service refuses to start, and says why in its log, if any of these is missing. It serves only the review routes and `/health`: no scan API.
+2. Vercel: new project from the repo, root directory `backend/review`. `vercel.json` sets the build (`node build.mjs`), the output folder and the security headers. Environment variables: `REVIEW_SUPABASE_URL`, `REVIEW_SUPABASE_ANON_KEY`, `REVIEW_API_BASE` (the Railway review service URL). The build fails if one is missing. Set `REVIEW_REQUIRE_MFA` here to the same value as on Railway.
 3. Put the Vercel URL in the review service's `REVIEW_ALLOWED_ORIGINS`, and redeploy it.
-4. Open the Vercel URL, sign in, and set up the authenticator.
+4. Open the Vercel URL, sign in, and set up the authenticator (skipped when two-step is off).
+
+**Two-step off for the demo (Mon, 2026-11-14):** set `REVIEW_REQUIRE_MFA=off` on both the Railway review service and the Vercel project (rebuild Vercel after changing it), and keep storage variant (a) in `kb/README.md`. The service logs a warning at startup and `/health` shows `"two_step": "off"`. An email and password are then enough to approve rows, so give reviewer accounts strong, unique passwords and turn it back on after the demo: `REVIEW_REQUIRE_MFA=on` (or unset) on both, storage variant (b), and every reviewer sets up an authenticator.
 
 **Before the console is hosted (Vercel or anywhere else):**
-- [ ] Leave `REVIEW_REQUIRE_MFA` on for the hosted service (the default). The local launcher's "off" applies only to its own process.
+- [ ] Leave `REVIEW_REQUIRE_MFA` on for the hosted service (the default), except for the demo above. The local launcher's "off" applies only to its own process.
 - [ ] Run storage variant (b) in `kb/README.md`, "Two-step sign-in setting".
 - [ ] Have every reviewer sign in once to set up an authenticator app.
 

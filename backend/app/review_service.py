@@ -10,9 +10,12 @@ docs. The page is served by Vercel (backend/review/), which is why CORS is
 needed here and only for REVIEW_ALLOWED_ORIGINS.
 
 It refuses to start unless:
-- REVIEW_DATABASE_URL, SUPABASE_URL and SUPABASE_ANON_KEY are set,
-- REVIEW_ALLOWED_ORIGINS names the hosted page (https only), and
-- REVIEW_REQUIRE_MFA is on (the default): a public sign-in page needs two-step sign-in.
+- REVIEW_DATABASE_URL, SUPABASE_URL and SUPABASE_ANON_KEY are set, and
+- REVIEW_ALLOWED_ORIGINS names the hosted page (https only).
+
+Two-step sign-in follows REVIEW_REQUIRE_MFA (default on). Off is allowed for a
+demo, but logged as a warning at startup and shown as "two_step": "off" on /health.
+The page's own setting (REVIEW_REQUIRE_MFA in the Vercel build) must match.
 """
 import logging
 import os
@@ -42,7 +45,10 @@ def check_settings() -> None:
     if any(not o.startswith("https://") or o.endswith("/") for o in config.REVIEW_ALLOWED_ORIGINS):
         raise NotReady("REVIEW_ALLOWED_ORIGINS must be https:// origins with no trailing slash.")
     if not config.REVIEW_REQUIRE_MFA:
-        raise NotReady("REVIEW_REQUIRE_MFA must stay on for the hosted review service.")
+        # Allowed (Mon, 2026-11-14, for the demo), but never quietly: a public
+        # sign-in page with a password alone is one leaked password from an approval.
+        log.warning("two-step sign-in is OFF for the hosted review service; set REVIEW_REQUIRE_MFA=on "
+                    "(and storage variant (b) in kb/README.md) once the demo is over")
 
 
 def build_app() -> FastAPI:
@@ -65,7 +71,7 @@ def build_app() -> FastAPI:
 
     @app.get("/health")
     def health() -> dict:
-        return {"status": "ok", "service": "review",
+        return {"status": "ok", "service": "review", "two_step": "on" if config.REVIEW_REQUIRE_MFA else "off",
                 "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7] or None}
 
     app.include_router(review.router)

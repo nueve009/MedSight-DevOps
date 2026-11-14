@@ -180,7 +180,7 @@ Press Ctrl+C to stop it.
 ### Two-step sign-in setting
 
 The authenticator code is controlled by `REVIEW_REQUIRE_MFA`. It defaults to on,
-so a hosted console stays strict. `python -m scripts.review_console` turns it off
+so a hosted console stays strict unless it's set to `off` there too (the demo setting in `docs/runbook.md`). `python -m scripts.review_console` turns it off
 for its own process, unless you add `--require-mfa`, and says which mode it's in
 when it starts. With it off, an email and password are enough. Every other check
 stays: the account must be active in `reviewers`.

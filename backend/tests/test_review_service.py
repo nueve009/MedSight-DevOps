@@ -35,7 +35,6 @@ def client(settings):
     ("REVIEW_ALLOWED_ORIGINS", [], "REVIEW_ALLOWED_ORIGINS"),
     ("REVIEW_ALLOWED_ORIGINS", ["http://medsight-review.vercel.app"], "https"),
     ("REVIEW_ALLOWED_ORIGINS", [PAGE + "/"], "trailing slash"),
-    ("REVIEW_REQUIRE_MFA", False, "REVIEW_REQUIRE_MFA"),
 ])
 def test_it_refuses_to_start_without_safe_settings(settings, monkeypatch, name, value, message):
     monkeypatch.setattr(config, name, value)
@@ -45,7 +44,18 @@ def test_it_refuses_to_start_without_safe_settings(settings, monkeypatch, name, 
 
 def test_health_and_commit(client, monkeypatch):
     monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "abcdef1234567")
-    assert client.get("/health").json() == {"status": "ok", "service": "review", "commit": "abcdef1"}
+    assert client.get("/health").json() == {"status": "ok", "service": "review", "two_step": "on",
+                                            "commit": "abcdef1"}
+
+
+def test_two_step_can_be_switched_off_but_not_quietly(settings, monkeypatch, caplog):
+    """Mon, 2026-11-14: off for the demo. It starts, warns in the log and says so on /health.
+    (What sign-in accepts with the switch off is tested in test_review_auth.py.)"""
+    monkeypatch.setattr(config, "REVIEW_REQUIRE_MFA", False)
+    with caplog.at_level("WARNING"):
+        client = TestClient(review_service.build_app())
+    assert "two-step sign-in is OFF" in caplog.text
+    assert client.get("/health").json()["two_step"] == "off"
 
 
 def test_review_routes_are_on_and_need_a_reviewer(client):
@@ -85,3 +95,10 @@ def test_vercel_build_writes_the_page_config(tmp_path):
     missing = subprocess.run(["node", "build.mjs"], cwd=tmp_path, env=base,
                              capture_output=True, text=True)
     assert missing.returncode == 1 and "REVIEW_API_BASE" in missing.stderr
+
+    for value, expected in (("off", False), ("OFF", False), ("on", True), ("garbage", True)):
+        done = subprocess.run(["node", "build.mjs"], cwd=tmp_path, env={**env, "REVIEW_REQUIRE_MFA": value},
+                              capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
+        built = json.loads((tmp_path / "dist" / "config.js").read_text().split("= ", 1)[1].rstrip(";\n"))
+        assert built["requireMfa"] is expected, value

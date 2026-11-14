@@ -53,6 +53,11 @@ checking video (plan doc: "MedSight backend: final checking plan").
   `review/build.mjs` builds the page for Vercel from environment variables, and
   `review/vercel.json` now sets the build and allows `*.up.railway.app` and
   `*.supabase.co`. The Dockerfile picks the service with `APP_MODULE`.
+- **Two-step sign-in is a switch** (Mon, 2026-11-14): `REVIEW_REQUIRE_MFA` (default on)
+  is read by the review service and by the Vercel build. Off lets reviewers sign in
+  with a password alone: for the demo or staging only. The service logs a warning at
+  startup and its `/health` shows `"two_step": "off"`. Turn it back on before real use
+  (`docs/runbook.md`, "Two-step off for the demo").
 
 **Decisions**
 - The review page goes on Vercel and its API on a second Railway service

@@ -4,9 +4,9 @@
 //   REVIEW_SUPABASE_URL       https://<project-ref>.supabase.co
 //   REVIEW_SUPABASE_ANON_KEY  the project's anon key (public by design)
 //   REVIEW_API_BASE           the review service on Railway, https://...
+//   REVIEW_REQUIRE_MFA        optional; "off" turns two-step sign-in off (demo only), default on
 //
-// Two-step sign-in is always required on the hosted page. Never put a service
-// key or a password in these variables.
+// Never put a service key or a password in these variables.
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 
 const env = (name) => (process.env[name] || "").trim();
@@ -14,7 +14,9 @@ const settings = {
   supabaseUrl: env("REVIEW_SUPABASE_URL").replace(/\/$/, ""),
   supabaseAnonKey: env("REVIEW_SUPABASE_ANON_KEY"),
   apiBase: env("REVIEW_API_BASE").replace(/\/$/, ""),
-  requireMfa: true,
+  // REVIEW_REQUIRE_MFA=off turns two-step sign-in off (demo only); anything else, or unset, keeps it on.
+  // It must match the review service's REVIEW_REQUIRE_MFA.
+  requireMfa: !["0", "off", "false", "no"].includes(env("REVIEW_REQUIRE_MFA").toLowerCase()),
 };
 
 const missing = Object.entries({ REVIEW_SUPABASE_URL: settings.supabaseUrl,
@@ -34,4 +36,4 @@ for (const [name, value] of [["REVIEW_SUPABASE_URL", settings.supabaseUrl], ["RE
 mkdirSync("dist", { recursive: true });
 for (const file of ["index.html", "review.css", "review.js"]) copyFileSync(file, `dist/${file}`);
 writeFileSync("dist/config.js", `window.REVIEW_CONFIG = ${JSON.stringify(settings)};\n`);
-console.log(`Review page built for API ${settings.apiBase}`);
+console.log(`Review page built for API ${settings.apiBase}, two-step sign-in ${settings.requireMfa ? "on" : "OFF"}`);
