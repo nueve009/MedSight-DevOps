@@ -191,7 +191,7 @@ Response (200):
   "status": "ok | ok_caveat | rescan | multiple | gave_up",
   "rescan_reason": "no_text | too_much_text | no_name | name_not_in_text | strength_unread | ingredients_incomplete | null",
   "hint": "move_closer | more_light | turn_box | null",
-  "tier": "reviewed | ingredient | web | general | null",
+  "tier": "reviewed | ingredient | web | general | brand | null",
   "product": {"brand": "Biogesic", "generics": ["Paracetamol"], "strengths": ["500 mg"], "prescription": false},
   "description": "A pain reliever and fever reducer.",
   "sources": [],
@@ -210,17 +210,23 @@ Response (200):
   - `rescan`: ask the user to scan again. `rescan_reason` says why and `hint`
     what to do (`turn_box`: scan the side with the ingredients list). A
     brand in the reviewed list whose strength or ingredients don't fully
-    match is always a rescan, e.g. "I found Biogesic but couldn't read the
-    strength. Turn the box and scan the side with the ingredients."
+    match is a rescan, e.g. "I found Biogesic but couldn't read the strength.
+    Turn the box and scan the side with the ingredients." The one exception:
+    its ingredients and a strength we don't list, with a good
+    `ocr_confidence` reported, is treated as an unlisted product and answered
+    with that tier's warning. Without `ocr_confidence` it stays a rescan.
   - `multiple`: two different brands, or two strengths of one brand, are in
     view. The user hears "I can see more than one medicine. Please set the
     others aside and scan one at a time."
   - `gave_up`: sent instead of `rescan` from attempt 3 on, saying only what
     was read clearly, e.g. "I can read Biogesic but not the strength. Please
-    ask someone to check the label." Reset `attempt` after it.
-- `product` and `tier` are `null` unless `status` is `ok` or `ok_caveat`.
-  `generics` and `strengths` are paired by position (a combination product
-  lists every ingredient).
+    ask someone to check the label." Reset `attempt` after it. Send `attempt`
+    (1, 2, 3...) for rescans of the same item, or this never happens. For a
+    listed brand whose strength can't be read, it can carry the `brand` tier.
+- `product` and `tier` are `null` unless `status` is `ok` or `ok_caveat`, or
+  a `gave_up` with the `brand` tier. `generics` and `strengths` are paired by
+  position (a combination product lists every ingredient); `brand` has an
+  empty `strengths`.
 - `tier`: where the description comes from. The spoken text says it, before
   the description:
 
@@ -230,6 +236,7 @@ Response (200):
   | `ingredient` | not a listed product, but every ingredient has a team-reviewed description | "Our team hasn't reviewed this product yet. Based on its ingredients, ..." |
   | `web` | allow-listed web search (M6; on when `WEB_SEARCH_PROVIDER=tavily`). The description is then spoken as "According to <site>, ...". `sources` holds the page URL. | "This medicine isn't in our reviewed list. The following information comes from the web and hasn't been reviewed by our team." |
   | `general` | the model's general knowledge (fallback) | "Warning: this medicine isn't in our reviewed list, so this is general information only and may be inaccurate." |
+  | `brand` | only on `gave_up`: a listed brand whose strength can't be read, when all its approved products have the same ingredients, description and prescription status. Never speaks a strength. | "I can read Biogesic, but I can't read the strength, so I can't confirm exactly which product this is." |
 
   Consider a distinct sound or vibration for anything other than `reviewed`.
   For `reviewed` answers, `product` holds the dataset's spelling (not the
@@ -300,7 +307,12 @@ Response (200):
   includes `"not verified"` (the value is unchanged for older app builds,
   although the spoken text now says "reviewed").
 
-`GET /health` returns `{"status": "ok", "llm_provider": "...", "kb_version": "...", "kb_products": 29}`.
+`GET /health` returns `{"status": "ok", "llm_provider": "...", "kb_version": "...", "kb_products": 29,
+"cache_backend": "postgres", "database": "ok", "web_search": "on", "commit": "7c2cfcb"}`.
+It answers 200 whenever the process is up, even with the database down
+(`"database": "unavailable"`), so a Supabase outage never fails a deploy's
+healthcheck. `commit` is the deployed git commit (Railway's
+`RAILWAY_GIT_COMMIT_SHA`), `null` when run elsewhere.
 `kb_version` is `null` and `kb_products` 0 when no reviewed dataset is loaded
 (no approved rows in Supabase, Supabase unreachable since startup, or no
 `data/kb.sqlite` locally): the service still runs, but every answer falls to
@@ -323,6 +335,26 @@ python -m scripts.kb_build --pull [--csv-out kb]         # approved rows -> data
 python -m scripts.kb_draft_descriptions                  # LLM drafts of spoken descriptions → kb/staging/
 python -m scripts.eval_kb --out report.json              # labeled scans: must give 0 wrong reviewed answers
 ```
+
+## LLM evaluation cases
+
+`kb/eval/llm_cases.jsonl` holds labeled cases for the AI part of the
+pipeline: label text, why the case matters, the model replies to use offline,
+and the acceptance criteria (status, tier, which reviewed product if any,
+phrases that must or must not be spoken, the warning before an unverified
+description, no dosing advice). They run against a made-up dataset, so the
+results don't depend on what reviewers have approved.
+
+```bash
+python -m scripts.eval_llm                   # offline: recorded replies, runs in CI on every PR
+python -m scripts.eval_llm --mode live       # the real model (LLM_PROVIDER); skips the bad-reply cases
+```
+
+Both print a table of input, expected and actual for each case (and add it to
+the GitHub Actions run page). Offline fails on any failed case; live fails
+only on a critical one: a reviewed answer for the wrong medicine, a missing
+warning, or dosing advice. These are typed label texts; the release gate of
+100 real phone scans is `eval_kb` above.
 
 **Request IDs:** every response has an `X-Request-Id` header. The app may
 send its own `X-Request-Id` (up to 64 letters, digits, `.`, `_` or `-`) and

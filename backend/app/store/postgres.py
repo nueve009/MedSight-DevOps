@@ -60,7 +60,8 @@ def _answer(row: dict) -> dict:
     return {"cache_key": row["cache_key"], "tier": row["tier"], "product": row["product"],
             "description": row["description"], "sources": row["source_urls"], "status": row["status"],
             "cached_at": row["created_at"].isoformat(),
-            "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None}
+            "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+            "page_text": row["page_text"]}
 
 
 def _audit_row(row: dict) -> dict:
@@ -118,17 +119,17 @@ class PostgresStore:
         return self._run(q)
 
     def set_answer(self, cache_key: str, tier: str, product: dict, description: str, sources: list[str],
-                   status: str = "active") -> None:
+                   status: str = "active", page_text: str = "") -> None:
         check_answer(tier, status)
         created = now()
         self._run(lambda cur: cur.execute(
-            "INSERT INTO answers (cache_key, tier, product, description, source_urls, status, created_at, expires_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (cache_key) DO UPDATE SET "
+            "INSERT INTO answers (cache_key, tier, product, description, source_urls, status, created_at, expires_at, "
+            "page_text) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (cache_key) DO UPDATE SET "
             "tier = EXCLUDED.tier, product = EXCLUDED.product, description = EXCLUDED.description, "
             "source_urls = EXCLUDED.source_urls, status = EXCLUDED.status, created_at = EXCLUDED.created_at, "
-            "expires_at = EXCLUDED.expires_at",
+            "expires_at = EXCLUDED.expires_at, page_text = EXCLUDED.page_text",
             (cache_key, tier, Jsonb(product), description, Jsonb(sources), status, created,
-             expires_at(tier, created))))
+             expires_at(tier, created), page_text)))
 
     def delete_answer(self, cache_key: str) -> bool:
         def q(cur):
@@ -200,13 +201,16 @@ class PostgresStore:
             for r in rows:
                 cur.execute(
                     "INSERT INTO answers (cache_key, tier, product, description, source_urls, status, created_at, "
-                    "expires_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (cache_key) DO UPDATE SET "
+                    "expires_at, page_text) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (cache_key) DO UPDATE SET "
                     "tier = EXCLUDED.tier, product = EXCLUDED.product, description = EXCLUDED.description, "
                     "source_urls = EXCLUDED.source_urls, status = EXCLUDED.status, "
-                    "created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at",
+                    "created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at, "
+                    "page_text = EXCLUDED.page_text",
                     (r["cache_key"], r["tier"], Jsonb(r["product"]), r["description"], Jsonb(r["sources"]),
                      r["status"], datetime.fromisoformat(r["cached_at"]),
-                     datetime.fromisoformat(r["expires_at"]) if r.get("expires_at") else None))
+                     datetime.fromisoformat(r["expires_at"]) if r.get("expires_at") else None,
+                     r.get("page_text", "")))
             return len(rows)
         return self._run(q)
 

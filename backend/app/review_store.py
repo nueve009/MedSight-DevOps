@@ -170,14 +170,17 @@ class PostgresReviewStore:
     def _value(column: str, value: str) -> Optional[str]:
         return None if column in NULL_WHEN_EMPTY and not value else value
 
-    def add_row(self, table: Table, values: dict, actor: str) -> None:
+    def _insert(self, conn, table: Table, values: dict, actor: str) -> None:
         columns = [c for c in table.fields if c not in CHECKER_COLUMNS]
         data = {**values, "entered_by": actor}
         query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             sql.Identifier(table.name), sql.SQL(", ").join(map(sql.Identifier, columns)),
             sql.SQL(", ").join(sql.Placeholder() * len(columns)))
+        conn.execute(query, [self._value(c, data.get(c, "")) for c in columns])
+
+    def add_row(self, table: Table, values: dict, actor: str) -> None:
         with self._conn() as conn:
-            conn.execute(query, [self._value(c, data.get(c, "")) for c in columns])
+            self._insert(conn, table, values, actor)
 
     def update_row(self, table: Table, key: str, changes: dict, actor: str) -> None:
         columns = [c for c in changes if c in table.editable]
@@ -255,6 +258,70 @@ class PostgresReviewStore:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM kb_fda_lookups WHERE id = %s", (candidate_id,)).fetchone()
         return _clean(row) if row else None
+
+    # --- web answers (migration 0007) ---
+
+    _WAITING_WEB = ("a.tier = 'web' AND a.status <> 'rejected' AND (a.expires_at IS NULL OR a.expires_at > now()) "
+                    "AND NOT EXISTS (SELECT 1 FROM kb_web_sends s WHERE s.cache_key = a.cache_key)")
+
+    def web_answers(self, limit: int = 200) -> list[dict]:
+        """Web answers still being spoken and not yet sent to the dataset, newest first."""
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT a.* FROM answers a WHERE {self._WAITING_WEB} "
+                                "ORDER BY a.created_at DESC LIMIT %s", (limit,)).fetchall()
+        return [_clean(r) for r in rows]
+
+    def web_answer(self, cache_key: str) -> Optional[dict]:
+        with self._conn() as conn:
+            row = conn.execute(f"SELECT a.* FROM answers a WHERE a.cache_key = %s AND {self._WAITING_WEB}",
+                               (cache_key,)).fetchone()
+        return _clean(row) if row else None
+
+    @staticmethod
+    def _locked_web_answer(conn, cache_key: str) -> dict:
+        row = conn.execute("SELECT * FROM answers WHERE cache_key = %s AND tier = 'web' FOR UPDATE",
+                           (cache_key,)).fetchone()
+        if row is None:
+            raise RowNotFound()
+        if row["status"] == "rejected":
+            raise Conflict("This answer has already been rejected.")
+        return row
+
+    @staticmethod
+    def _audit(conn, actor: str, action: str, cache_key: str, before: dict, after: dict) -> None:
+        conn.execute("INSERT INTO audit_log (admin, action, cache_key, before, after) VALUES (%s, %s, %s, %s, %s)",
+                     (actor, action, cache_key, Jsonb(_clean(before)), Jsonb(_clean(after))))
+
+    def reject_web_answer(self, cache_key: str, actor: str) -> None:
+        with self._conn() as conn, conn.transaction():
+            before = self._locked_web_answer(conn, cache_key)
+            conn.execute("UPDATE answers SET status = 'rejected' WHERE cache_key = %s", (cache_key,))
+            self._audit(conn, actor, "reject", cache_key, before, {**before, "status": "rejected"})
+
+    def send_web_answer(self, cache_key: str, actor: str, product: dict, passage: dict, note: str) -> list[str]:
+        """The pending product, its passage and any missing ingredients, the link and the
+        audit row: all of it or none. Nothing is approved. Returns the ingredients added."""
+        added = []
+        with self._conn() as conn, conn.transaction():
+            before = self._locked_web_answer(conn, cache_key)
+            if conn.execute("SELECT 1 FROM kb_web_sends WHERE cache_key = %s", (cache_key,)).fetchone():
+                raise Conflict("This answer has already been sent to the dataset.")
+            known = set()
+            for row in conn.execute("SELECT generic_name, synonyms FROM kb_ingredients").fetchall():
+                known |= {n.strip().casefold() for n in [row["generic_name"], *row["synonyms"].split("|")]}
+            for name in (g.strip() for g in product["generic_names"].split("|")):
+                if name and name.casefold() not in known:
+                    self._insert(conn, TABLES["ingredients"], {"generic_name": name, "pnf_listed": "no"}, actor)
+                    known.add(name.casefold())
+                    added.append(name)
+            self._insert(conn, TABLES["products"], product, actor)
+            conn.execute("UPDATE kb_products SET review_note = %s WHERE product_id = %s", (note, product["product_id"]))
+            self._insert(conn, TABLES["passages"], passage, actor)
+            conn.execute("INSERT INTO kb_web_sends (cache_key, product_id, sent_by) VALUES (%s, %s, %s)",
+                         (cache_key, product["product_id"], actor))
+            self._audit(conn, actor, "send_to_kb", cache_key, before,
+                        {"product_id": product["product_id"], "ingredients_added": added})
+        return added
 
     def stats(self) -> dict:
         out: dict = {}

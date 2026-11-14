@@ -5,7 +5,22 @@ edit. The DevOps engineer moves each one into place in its own PR.
 
 | File | Move to | Milestone |
 |---|---|---|
-| `backend-ci.yml` | `.github/workflows/backend-ci.yml` | M0 |
+| `backend-ci.yml` | `.github/workflows/backend-ci.yml` (replace it) | M0, updated 2026-11-14 |
+| `llm-eval-live.yml` | `.github/workflows/llm-eval-live.yml` | 2026-11-14 |
+
+## 2026-11-14 checklist (final checking)
+
+1. Replace `.github/workflows/backend-ci.yml` with `backend-ci.yml` from here.
+   It adds a test summary table on the run page, the offline LLM evaluation
+   cases, and the JUnit and eval reports as run artifacts. Job names don't
+   change, so the required checks stay the same.
+2. Add `llm-eval-live.yml`, and a `GROQ_API_KEY` secret to the `staging`
+   environment (a separate Groq key from Railway's is better, so a bad run
+   can't use up the app's limit). Start it once with "Run workflow".
+3. In the `protect-main` ruleset, require 1 approval, so the change-to-deploy
+   demo shows a teammate's review being enforced.
+4. In Railway, turn on "Wait for CI" for the backend service, so a merge
+   deploys only after the checks on `main` pass.
 
 ## M0 checklist (repo settings)
 

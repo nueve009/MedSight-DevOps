@@ -70,6 +70,31 @@ def test_wrong_strength_is_a_strength_rescan(kb):
     assert match(kb, "Biogesic", ["Paracetamol"], ["650 mg"]).reason == STRENGTH_UNREAD
 
 
+def test_a_clearly_read_strength_we_dont_list_is_an_unlisted_product(kb):
+    p = ParsedProduct("Dolfenal", ("Mefenamic acid",), ("250 mg",))
+    assert (kb.match(p, clear_reading=True).kind, kb.match(p).kind) == (NONE, PARTIAL)
+
+
+def test_a_clearly_read_other_strength_can_use_the_ingredient_tier(kb):
+    p = ParsedProduct("Biogesic", ("Paracetamol",), ("650 mg",))
+    assert kb.match(p, clear_reading=True).kind == INGREDIENT
+
+
+@pytest.mark.parametrize("brand, generics, strengths", [
+    ("Biogesic", (), ()),                                  # nothing read but the brand
+    ("Biogesic", ("Paracetamol",), ("",)),                 # strength faded
+    ("Biogesic", ("Ibuprofen",), ("200 mg",)),             # other ingredients
+    ("Alaxan FR", ("Paracetamol",), ("325 mg",)),          # combination read short
+])
+def test_a_clear_reading_still_rescans_anything_but_another_strength(kb, brand, generics, strengths):
+    assert kb.match(ParsedProduct(brand, generics, strengths), clear_reading=True).kind == PARTIAL
+
+
+def test_a_clear_reading_still_matches_the_listed_strength(kb):
+    p = ParsedProduct("Biogesic", ("Paracetamol",), ("500 mg",))
+    assert kb.match(p, clear_reading=True).kind == REVIEWED
+
+
 def test_combination_read_with_fewer_ingredients_is_incomplete(kb):
     """Alaxan FR read as paracetamol only must never become Biogesic or an answer."""
     m = match(kb, "Alaxan FR", ["Paracetamol"], ["325 mg"])
@@ -83,6 +108,59 @@ def test_listed_brand_with_other_ingredients_is_a_rescan(kb):
 def test_brand_with_several_forms_prefers_the_strength_reason(kb):
     m = match(kb, "Tempra", ["Paracetamol"], ["250 mg"])
     assert (m.kind, m.reason) == (PARTIAL, STRENGTH_UNREAD)
+
+
+# --- brand level: a give-up where the strength can't be read ---
+
+def level(kb, brand, generics=(), strengths=()):
+    return kb.brand_level(ParsedProduct(brand, tuple(generics), tuple(strengths)))
+
+
+def test_brand_level_for_a_brand_read_alone(kb):
+    assert level(kb, "Biogesic").brand == "Biogesic"
+
+
+def test_brand_level_with_the_ingredient_read_and_strength_faded(kb):
+    assert level(kb, "Biogesic", ["Acetaminophen"], [""]).brand == "Biogesic"   # a synonym still agrees
+
+
+def test_brand_level_when_every_form_says_the_same(kb):
+    assert level(kb, "Tempra").brand == "Tempra"   # two strengths, same ingredients, description, Rx
+
+
+def test_brand_level_is_never_for_a_fuzzy_brand(kb):
+    assert level(kb, "Bi0gesic") is None
+
+
+def test_brand_level_needs_a_brand_on_the_list(kb):
+    assert level(kb, "Unlistedol") is None
+    assert level(kb, None, ["Paracetamol"], [""]) is None
+
+
+def test_brand_level_refuses_a_fully_read_strength(kb):
+    assert level(kb, "Biogesic", ["Paracetamol"], ["650 mg"]) is None
+    assert level(kb, "Biogesic", ["Paracetamol"], ["500 mg"]) is None
+
+
+def test_brand_level_refuses_a_read_ingredient_the_brand_doesnt_have(kb):
+    assert level(kb, "Biogesic", ["Ibuprofen"], [""]) is None
+
+
+def test_brand_level_refuses_a_partly_read_strength_that_disagrees(kb):
+    assert level(kb, "Alaxan FR", ["Ibuprofen", "Paracetamol"], ["400 mg", ""]) is None
+    assert level(kb, "Alaxan FR", ["Ibuprofen", "Paracetamol"], ["200 mg", ""]).brand == "Alaxan FR"
+
+
+@pytest.mark.parametrize("change", [
+    {"spoken_description": "TEST: something else."},
+    {"classification": "Rx"},
+    {"generic_names": "Ibuprofen"},
+])
+def test_brand_level_refuses_a_brand_whose_products_differ(tmp_path, change):
+    rows = review_rows()
+    rows["products"].append(product("tempra-250-tab", "Tempra", "Paracetamol", "250 mg", **change))
+    rows["passages"].append(tfd_passage("tempra-250-tab"))
+    assert level(build_kb(tmp_path, rows), "Tempra") is None
 
 
 # --- never the wrong product ---

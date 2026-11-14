@@ -18,13 +18,15 @@ Answer order (development plan, section 5):
 Tiers: "reviewed" (team-checked dataset), "ingredient" (team-checked
 ingredient descriptions, brand not reviewed), "web" (allow-listed web
 search) and "general" (the model's own general knowledge, the fallback).
+"brand" is only for a give-up on a listed brand whose strength can't be read:
+it says so first, and never speaks a strength.
 """
 import re
 from typing import Optional
 
 from app.llm_parse import ParsedProduct
 
-REVIEWED, INGREDIENT, WEB, GENERAL = "reviewed", "ingredient", "web", "general"
+REVIEWED, INGREDIENT, WEB, GENERAL, BRAND = "reviewed", "ingredient", "web", "general", "brand"
 
 REVIEWED_LINE = "Our team has reviewed this information."
 # Named RX_* rather than "prescription" so code scanners don't take fixed app wording for medical data.
@@ -64,6 +66,9 @@ _GAVE_UP_MISSING = {
     "ingredients_incomplete": "all of its ingredients",
 }
 GAVE_UP_UNREAD = "I still can't read this label clearly. Please ask someone to check it for you."
+BRAND_NO_STRENGTH = ("I can read {brand}, but I can't read the strength, "
+                     "so I can't confirm exactly which product this is.")
+BRAND_CHECK_ADVICE = "Please ask someone to check the label, or ask a pharmacist, before taking it."
 
 _UNITS = {"mcg": "micrograms", "µg": "micrograms", "mg": "milligrams", "g": "grams", "ml": "milliliters",
           "l": "liters", "iu": "international units", "%": "percent"}
@@ -143,3 +148,12 @@ def gave_up(reason: Optional[str], product: Optional[ParsedProduct] = None) -> s
     if missing and product and product.label:
         return f"I can read {product.label} but not {missing}. Please ask someone to check the label."
     return GAVE_UP_UNREAD
+
+
+def brand_give_up(brand: str, generics: list[str], description: str, rx: bool = False) -> str:
+    """The give-up answer for a listed brand whose strength can't be read. Never a strength or dose."""
+    parts = [BRAND_NO_STRENGTH.format(brand=brand), f"{brand} contains {_join(generics)}."]
+    if rx:
+        parts.append(RX_LINE)
+    parts += [_sentence(description), BRAND_CHECK_ADVICE]
+    return " ".join(parts)

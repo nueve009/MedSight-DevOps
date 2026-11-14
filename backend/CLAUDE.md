@@ -128,7 +128,12 @@ the result to the v1 shape. `scripts/main.py` (webcam) uses `identify()` too.
    `spoken_description`, and `speech.RX_LINE` for `Rx`. `partial`: an
    **exact** listed brand whose contents disagree → rescan via
    `scan_rules.partial_match_reason` (never for a fuzzy brand, so a near
-   miss never names a listed brand). `ingredient`: every ingredient has a
+   miss never names a listed brand). The exception (`clear_reading`: status
+   `ok` with a reported OCR confidence): its ingredients and a fully read strength we don't list is
+   treated as an unlisted product. On a give-up for an unread strength,
+   `KnowledgeBase.brand_level` allows the `brand` tier: exact brand, and all its
+   approved products share ingredients, description and Rx; never a strength.
+   `ingredient`: every ingredient has a
    reviewed `spoken_description`. Several full matches with different
    descriptions or Rx status are not answered as reviewed. Reviewed and
    ingredient answers never use the answer cache or an LLM.
@@ -239,6 +244,9 @@ deployed backend serves them within `KB_REFRESH_S` with no deploy.
   `innerHTML`.
 - The launcher serves only the console (no scan routes) and listens on
   127.0.0.1 unless `--host` is passed.
+- Web answers tab (migration 0007): `answers.page_text`, `kb_web_sends`. Reject
+  and Send to kb are audited in `audit_log`; sending only makes pending rows,
+  and refuses a box or insert source that's a web link.
 - Tests: `tests/test_review_routes.py` uses a fake store; `test_review_store.py`
   and `test_review_migration.py` need `MEDSIGHT_TEST_DATABASE_URL`.
 

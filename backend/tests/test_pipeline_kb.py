@@ -2,9 +2,10 @@
 import pytest
 
 from app import description_agent, llm_parse, speech
+from app.api import IdentifyV2Response
 from app.pipeline import ScanRequest, identify, identify_scan
 from tests.fixtures import labels
-from tests.fixtures.fake_kb import build_kb
+from tests.fixtures.fake_kb import build_kb, product, review_rows, tfd_passage
 
 PARSE, DESCRIBE = llm_parse.PARSE_SYSTEM_PROMPT, description_agent.DESCRIPTION_SYSTEM_PROMPT
 NEOZEP_ALIKE = labels.product("Neozep Forte", ["Phenylephrine HCl", "Chlorphenamine Maleate", "Paracetamol"],
@@ -63,9 +64,80 @@ def test_brand_without_strength_rescans_then_gives_up(fake_llm, cache, kb):
     assert (first["status"], first["rescan_reason"], first["hint"]) == ("rescan", "strength_unread", "turn_box")
     assert first["spoken_text"].startswith("I found Biogesic but couldn't read the strength.")
     third = scan(cache, kb, text=text, attempt=3)
-    assert third["status"] == "gave_up"
-    assert third["spoken_text"] == "I can read Biogesic but not the strength. Please ask someone to check the label."
+    assert (third["status"], third["tier"]) == ("gave_up", "brand")
+    assert third["spoken_text"] == (
+        "I can read Biogesic, but I can't read the strength, so I can't confirm exactly which product this is. "
+        "Biogesic contains Paracetamol. TEST: relieves mild pain and fever. "
+        "Please ask someone to check the label, or ask a pharmacist, before taking it.")
+    assert third["product"] == {"brand": "Biogesic", "generics": ["Paracetamol"], "strengths": [],
+                                "prescription": False}
+    assert third["matched_product_id"] is None
     assert fake_llm.count(DESCRIBE) == 0
+
+
+def test_brand_level_answer_only_comes_on_the_give_up(fake_llm, cache, kb):
+    text = "BIOGESIC\nParacetamol"
+    fake_llm.reply(PARSE, labels.reply(labels.product("BIOGESIC", ["Paracetamol"], [""])))
+    assert scan(cache, kb, text=text, attempt=2)["tier"] is None
+    third = scan(cache, kb, text=text, attempt=3)   # ingredient read, strength faded
+    assert third["tier"] == "brand" and third["rescan_reason"] == "strength_unread"
+    assert "milligrams" not in third["spoken_text"]
+
+
+def test_v1_never_gets_the_brand_level_answer(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("BIOGESIC", [], [])))
+    r = identify("BIOGESIC BIOGESIC\nUNILAB", None, cache, kb=kb)
+    assert r["status"] == "rescan" and "couldn't read the strength" in r["spoken_text"]
+
+
+def test_a_brand_with_different_rx_status_keeps_the_plain_give_up(fake_llm, cache, tmp_path):
+    rows = review_rows()
+    rows["products"].append(product("biogesic-650-tab", "Biogesic", "Paracetamol", "650 mg", classification="Rx",
+                                    spoken_description="TEST: relieves mild pain and fever."))
+    rows["passages"].append(tfd_passage("biogesic-650-tab"))
+    fake_llm.reply(PARSE, labels.reply(labels.product("BIOGESIC", [], [])))
+    r = scan(cache, build_kb(tmp_path, rows), text="BIOGESIC BIOGESIC\nUNILAB", attempt=3)
+    assert (r["status"], r["tier"], r["product"]) == ("gave_up", None, None)
+    assert r["spoken_text"] == "I can read Biogesic but not the strength. Please ask someone to check the label."
+
+
+def test_rx_brand_says_so_at_brand_level(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Dolfenal", [], [])))
+    r = scan(cache, kb, text="DOLFENAL\nWESTMONT", attempt=3)
+    assert r["tier"] == "brand" and r["product"]["prescription"] is True
+    assert speech.RX_LINE in r["spoken_text"]
+
+
+def test_a_clearly_read_unlisted_strength_is_answered_with_a_warning(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Dolfenal", ["Mefenamic acid"], ["250 mg"])))
+    fake_llm.reply(DESCRIBE, {"description": "A pain reliever.", "confidence": 0.5})
+    r = scan(cache, kb, text="DOLFENAL\nMefenamic acid 250 mg", ocr_confidence=0.9)
+    assert (r["status"], r["tier"], r["matched_product_id"]) == ("ok", "general", None)
+    assert speech.GENERAL_WARNING in r["spoken_text"] and speech.REVIEWED_LINE not in r["spoken_text"]
+
+
+def test_a_shaky_reading_of_an_unlisted_strength_is_still_a_rescan(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Dolfenal", ["Mefenamic acid"], ["250 mg"])))
+    r = scan(cache, kb, text="DOLFENAL\nMefenamic acid 250 mg", ocr_confidence=0.3)
+    assert (r["status"], r["rescan_reason"], r["tier"]) == ("rescan", "strength_unread", None)
+    assert fake_llm.count(DESCRIBE) == 0
+
+
+def test_an_unknown_confidence_is_not_a_clear_reading(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Dolfenal", ["Mefenamic acid"], ["250 mg"])))
+    r = scan(cache, kb, text="DOLFENAL\nMefenamic acid 250 mg", ocr_confidence=None)
+    assert (r["status"], r["rescan_reason"]) == ("rescan", "strength_unread")
+
+
+def test_a_read_strength_that_is_not_listed_gets_no_brand_answer(fake_llm, cache, kb):
+    fake_llm.reply(PARSE, labels.reply(labels.product("Biogesic", ["Paracetamol"], ["650 mg"])))
+    r = scan(cache, kb, text="BIOGESIC\nParacetamol 650 mg", attempt=3, ocr_confidence=0.3)
+    assert (r["status"], r["tier"]) == ("gave_up", None)
+
+
+def test_the_v2_response_accepts_the_brand_tier():
+    assert IdentifyV2Response(status="gave_up", rescan_reason="strength_unread", hint=None, tier="brand", product=None,
+                              description="x", sources=[], spoken_text="x", request_id=None, cache=None).tier == "brand"
 
 
 def test_combination_read_short_is_never_answered(fake_llm, cache, kb):

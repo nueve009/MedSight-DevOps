@@ -180,7 +180,7 @@ Press Ctrl+C to stop it.
 ### Two-step sign-in setting
 
 The authenticator code is controlled by `REVIEW_REQUIRE_MFA`. It defaults to on,
-so a hosted console stays strict. `python -m scripts.review_console` turns it off
+so a hosted console stays strict unless it's set to `off` there too (the demo setting in `docs/runbook.md`). `python -m scripts.review_console` turns it off
 for its own process, unless you add `--require-mfa`, and says which mode it's in
 when it starts. With it off, an email and password are enough. Every other check
 stays: the account must be active in `reviewers`.
@@ -243,6 +243,21 @@ read. **Match the number printed on the box and confirm it on the portal.**
   rules must still pass.
 - If a row changed while you were reading it, the approval is refused.
 - Every decision is kept permanently in `kb_reviews`, with a copy of the row.
+
+### Web answers
+
+The "Web answers" tab lists answers from the allowed sites. Users hear them
+with a warning while they wait here, so you can leave one for later.
+
+- **Reject** stops it being spoken. The next scan searches again, so it can
+  come back if the page still says the same thing.
+- **Send to kb** creates a pending product, its indications passage and any
+  missing ingredients, entered under your name. Someone else must approve them.
+  A web page alone can't back a reviewed medicine: you need the box, the insert
+  or a TheFilipinoDoctor page, and the text must be word for word from it. FDA
+  values come from the portal. The brand may have no candidates, since the
+  lookup script only covers the team's list. The answer stays spoken until the
+  product is approved, then the reviewed answer takes over by itself.
 
 ### Closing the Table Editor route
 
@@ -341,8 +356,13 @@ aloud. Leave out dosage instructions.
 A scan gets the reviewed answer only when the **brand (or an alias) and
 every ingredient and strength** agree with one product. A slightly misread
 brand is accepted only when everything else agrees. A listed brand with a
-missing or different strength or ingredient is never answered: the app asks
-the user to turn the box ("I found Biogesic but couldn't read the strength").
+missing strength or different ingredients is never answered as reviewed: the
+app asks the user to turn the box ("I found Biogesic but couldn't read the
+strength"). After three tries it says what the brand is, if every approved
+product of that brand has the same ingredients, description and OTC/Rx, and
+asks the user to have the label checked; it never says a strength. A strength
+read with confidence that isn't listed for that brand is treated as an
+unlisted product, with that tier's warning.
 A different brand with the same ingredients (for example two cold medicines
 with identical formulas) never gets the other brand's answer.
 

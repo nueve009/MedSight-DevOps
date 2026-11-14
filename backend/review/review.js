@@ -603,6 +603,103 @@ async function showEdit(table, key) {
     el("section", { class: "card" }, form));
 }
 
+// --- web answers ---
+
+function isTfd(url) {
+  return /^https:\/\/(www\.)?thefilipinodoctor\.com\/\S+$/.test(url || "");
+}
+
+function sendForm(answer) {
+  const source = answer.sources[0] || "";
+  const tfd = isTfd(source);
+  // Only a TheFilipinoDoctor page can be the passage's source, so only its text is prefilled.
+  const inputs = {
+    brand_name: el("input", { type: "text", value: answer.brand || "" }),
+    generic_names: el("input", { type: "text", value: answer.generics.join("|") }),
+    strengths: el("input", { type: "text", value: answer.strengths.join("|") }),
+    dosage_form: el("input", { type: "text", value: "" }),
+    product_id: el("input", { type: "text", value: "", placeholder: "Leave empty to make one from the above" }),
+    source_type: fieldInput("source_type", tfd ? "tfd" : "box"),
+    source_ref: el("input", { type: "text", value: tfd ? source : "", placeholder: "Photo name, or the TheFilipinoDoctor link" }),
+    passage_text: el("textarea", { value: tfd ? answer.page_text : "" }),
+  };
+  const labels = { brand_name: "Brand", generic_names: "Ingredients (separate with |)", strengths: "Strengths, same order (separate with |)",
+    dosage_form: "Dosage form", product_id: "Product ID", source_type: "What backs this", source_ref: "Source reference", passage_text: "Indications text, word for word from that source" };
+  const button = el("button", { type: "submit" }, "Create pending rows");
+  return el("form", {
+    onsubmit: async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      try {
+        const json = Object.fromEntries(Object.entries(inputs).map(([field, input]) => [field, input.value]));
+        const sent = await api(`/admin/web-answers/${encodeURIComponent(answer.cache_key)}/send`, { method: "POST", json });
+        say(`Created pending rows for ${sent.product_id}. Someone else must check them.`);
+        location.hash = rowLink("products", sent.product_id);
+      } catch (error) {
+        say(error.message, "error");
+        button.disabled = false;
+      }
+    },
+  },
+  el("p", { class: "notice" }, "A web page alone can't back a reviewed medicine. You need the box, the insert or a TheFilipinoDoctor page. FDA values are added afterwards from the portal."),
+  ...Object.entries(inputs).map(([field, input]) => el("label", {}, labels[field], input)),
+  button);
+}
+
+function webAnswerCard(answer, reload) {
+  const sources = answer.sources.filter((url) => url.startsWith("https://"))
+    .map((url) => el("p", {}, el("a", { href: url, target: "_blank", rel: "noopener" }, url)));
+  const name = [answer.brand, answer.generics.map((g, i) => `${g} ${answer.strengths[i] || ""}`.trim()).join(" + ")].filter(Boolean).join(", ");
+  const holder = el("div", {});
+  const reject = el("button", {
+    type: "button",
+    class: "quiet",
+    onclick: async () => {
+      if (!confirm("Stop speaking this answer? The next scan searches again, so it can come back if the page says the same thing.")) return;
+      reject.disabled = true;
+      try {
+        await api(`/admin/web-answers/${encodeURIComponent(answer.cache_key)}/reject`, { method: "POST" });
+        say("Rejected. It's no longer spoken.");
+        await reload();
+      } catch (error) {
+        say(error.message, "error");
+        reject.disabled = false;
+      }
+    },
+  }, "Reject");
+  const send = el("button", {
+    type: "button",
+    onclick: () => {
+      holder.replaceChildren(sendForm(answer));
+      send.disabled = true;
+    },
+  }, "Send to kb");
+  const page = answer.page_text
+    ? el("details", {}, el("summary", {}, "Page text this was based on"), el("p", {}, answer.page_text))
+    : el("p", { class: "muted" }, "The page text wasn't saved for this answer.");
+  return el("section", { class: "card" },
+    el("h2", {}, name || "Unnamed product"),
+    el("p", {},
+      el("span", { class: "badge" }, answer.status.replace("_", " ")),
+      answer.prescription ? el("span", { class: "badge warn" }, "Page says prescription") : null),
+    el("p", {}, el("strong", {}, "Users hear: "), answer.spoken),
+    ...sources,
+    el("p", { class: "muted" }, `Saved ${answer.cached_at}`),
+    page,
+    el("div", { class: "row-actions" }, send, reject),
+    holder);
+}
+
+async function showWebAnswers() {
+  const answers = await api("/admin/web-answers");
+  const reload = () => showWebAnswers();
+  show(el("h1", {}, "Web answers"),
+    el("p", { class: "muted" }, "Answers from the allowed sites. Users hear them with a warning while they wait here."),
+    ...(answers.length
+      ? answers.map((answer) => webAnswerCard(answer, reload))
+      : [el("section", { class: "card" }, el("p", { class: "muted" }, "No web answers are waiting."))]));
+}
+
 // --- routing ---
 
 async function route() {
@@ -612,6 +709,7 @@ async function route() {
     else if (parts[0] === "edit" && parts[2]) await showEdit(parts[1], parts[2]);
     else if (parts[0] === "add") await showAdd(parts[1] || "products");
     else if (parts[0] === "mine") await showMine();
+    else if (parts[0] === "web") await showWebAnswers();
     else await showQueue();
   } catch (error) {
     if (session) say(error.message, "error");

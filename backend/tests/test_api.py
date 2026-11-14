@@ -43,7 +43,22 @@ def kb_client(monkeypatch, tmp_path):
 def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "llm_provider": "groq", "kb_version": None, "kb_products": 0}
+    assert resp.json() == {"status": "ok", "llm_provider": "groq", "kb_version": None, "kb_products": 0,
+                           "cache_backend": "sqlite", "database": "ok", "web_search": "off", "commit": None}
+
+
+def test_health_shows_the_deployed_commit(client, monkeypatch):
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "7c2cfcb7ea175a3c0a68cc44f94b339eb6e5f3b9")
+    assert client.get("/health").json()["commit"] == "7c2cfcb"
+
+
+def test_health_stays_up_when_the_database_is_down(client, monkeypatch):
+    def broken(_key):
+        raise RuntimeError("connection refused")
+    monkeypatch.setattr(client.app.state.cache, "get_parse", broken)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json()["database"] == "unavailable"
 
 
 def test_health_reports_the_loaded_dataset(kb_client):

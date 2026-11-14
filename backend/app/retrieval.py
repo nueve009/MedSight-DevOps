@@ -182,7 +182,18 @@ class KnowledgeBase:
         reasons = {partial_match_reason(p, list(k.generics), list(k.strengths), same) for k in candidates}
         return STRENGTH_UNREAD if STRENGTH_UNREAD in reasons else INGREDIENTS_INCOMPLETE
 
-    def match(self, p: ParsedProduct) -> Match:
+    def _other_strength(self, p: ParsedProduct, candidates: list[KBProduct]) -> bool:
+        """Every ingredient and strength was read, the ingredients are this brand's,
+        and the strength just isn't one we list (the caller knows no product fully matched)."""
+        read = self._contents(p.generics, p.strengths)
+        if read is None:
+            return False
+        listed = [self._contents(k.generics, k.strengths) for k in candidates]
+        return all(contents is not None and contents.keys() == read.keys() for contents in listed)
+
+    def match(self, p: ParsedProduct, clear_reading: bool = False) -> Match:
+        """clear_reading: the OCR was confident, so a strength we don't list is
+        treated as a product we don't list rather than a misread (a rescan)."""
         if p.brand and self.products:
             key = brand_key(p.brand)
             exact = [k for k in self.products if key in k.brand_keys]
@@ -198,10 +209,42 @@ class KnowledgeBase:
                 # or Rx status (e.g. two forms): don't pick one.
                 log.warning("ambiguous dataset match", extra={"fields": {
                     "product_ids": [k.product_id for k in full]}})
-            elif exact:
+            elif exact and not (clear_reading and self._other_strength(p, exact)):
                 return Match(PARTIAL, exact[0], reason=self._partial_reason(p, exact))
 
         return self._ingredient_match(p)
+
+    def brand_level(self, p: ParsedProduct) -> Optional[KBProduct]:
+        """A product to describe at brand level when the strength can't be read, or None.
+
+        Only for an exact brand (never fuzzy: a misread brand must not name a
+        listed one) whose every approved product has the same ingredients,
+        description and Rx status, so it doesn't matter which one this is.
+        Whatever was read must agree with them, and a fully read strength
+        doesn't qualify: that's a different product, not a missing strength.
+        """
+        if not p.brand or (p.generics and len(p.strengths) == len(p.generics) and all(p.strengths)):
+            return None
+        key = brand_key(p.brand)
+        exact = [k for k in self.products if key in k.brand_keys]
+        if not exact or not exact[0].spoken_description:
+            return None
+
+        def names(k: KBProduct) -> frozenset[str]:
+            return frozenset(name_key(self.canonical(g)) for g in k.generics)
+
+        if len({(names(k), k.spoken_description, k.rx) for k in exact}) != 1:
+            return None
+        listed: dict[str, set[str]] = {}
+        for k in exact:
+            for g, s in zip(k.generics, k.strengths, strict=False):
+                listed.setdefault(name_key(self.canonical(g)), set()).add(normalize_strength(s))
+        for i, generic in enumerate(p.generics):
+            name = name_key(self.canonical(generic))
+            strength = p.strengths[i] if i < len(p.strengths) else ""
+            if name not in listed or (strength and normalize_strength(strength) not in listed[name]):
+                return None
+        return exact[0]
 
     def _ingredient_match(self, p: ParsedProduct) -> Match:
         rows = [self.ingredients.get(name_key(self.canonical(g))) for g in p.generics]

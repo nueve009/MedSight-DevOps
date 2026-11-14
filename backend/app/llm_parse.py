@@ -72,6 +72,8 @@ MAX_PRODUCTS = 5
 MAX_INGREDIENTS = 8
 MAX_NAME_CHARS = 80
 MAX_STRENGTH_CHARS = 40
+# A chemical locant before a name: "2,4-" in "2,4-Dichlorobenzyl alcohol", "5-" in "5-Fluorouracil".
+_LOCANT = re.compile(r"^\d+(?:,\d+)*['′]?-(?![a-zμµ]{1,3}\b)(?=[^\W\d_])", re.IGNORECASE)   # not "500-mg"
 
 
 @dataclass(frozen=True)
@@ -139,7 +141,9 @@ def _validate(reply: dict) -> ParseResult:
         brand = _text(item.get("brand_name", ""), MAX_NAME_CHARS) or None
         generics = tuple(_text(g, MAX_NAME_CHARS) for g in generics)
         strengths = tuple(_text(s, MAX_STRENGTH_CHARS) for s in strengths)
-        if any(not re.search(r"[^\W\d_]", g) or re.match(r"\d", g) for g in generics):
+        # A chemical name may start with a locant ("2,4-Dichlorobenzyl alcohol",
+        # "5-Fluorouracil"); a strength in the ingredient slot ("500 mg") may not.
+        if any(not re.search(r"[^\W\d_]", g) or re.match(r"\d", _LOCANT.sub("", g)) for g in generics):
             raise ValueError("ingredient name is empty or looks like a strength")
         if brand or generics:
             products.append(ParsedProduct(brand, generics, strengths))

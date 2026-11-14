@@ -5,6 +5,106 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-14 - Two web-tier bugs found in the live Tavily test
+
+**Asked by Mon.** A live test (real Tavily and Groq, temp data folder) of an unlisted
+product, Strepsils, got a rescan, and without the "2,4-" it got the general tier
+instead of web.
+
+**Fixed**
+- `llm_parse._validate` threw away the whole reply when an ingredient name started
+  with a digit, so "2,4-Dichlorobenzyl alcohol" became rescan `no_name`. A leading
+  chemical locant ("2,4-", "5-") is now allowed; a strength in the ingredient slot
+  ("500 mg", "500-mg", "10-20 mg") is still rejected.
+- `web_search.lookup` cut each page to `MAX_SOURCE_CHARS` before checking that it
+  names the brand and every ingredient. Hello Doctor's Strepsils page names the
+  ingredients past character 5,300, so every page was dropped. A long page now
+  keeps its start (`EXCERPT_HEAD_CHARS`) plus the text from just before the first
+  ingredient mention, still at most `MAX_SOURCE_CHARS`; the gate and the model see
+  the same excerpt, so the model never gets less than the gate checked.
+
+**Checked:** the new tests fail on the old code. `pytest`: 710 passed, 90 skipped
+(Postgres-only). `ruff check` clean.
+
+---
+
+## 2026-11-14 - Final checking: eval cases, test summary, /health, hosted review console
+
+**Asked by Mon:** build the backend deployment plan for the final project
+checking video (plan doc: "MedSight backend: final checking plan").
+
+- **LLM evaluation cases:** `kb/eval/llm_cases.jsonl` (21 cases) and
+  `scripts/eval_llm.py`. Offline mode replays recorded model replies, so it is
+  free and runs in CI (`tests/test_llm_eval.py` and a CI step that writes the
+  results table to the run page). Live mode calls Groq and skips the six
+  deliberately bad replies. Cases use the made-up dataset from
+  `tests/fixtures/fake_kb.py`, never `kb/`.
+- **Test summary:** `scripts/ci_test_summary.py` turns pytest's JUnit report
+  into a passed/failed/skipped table on the Actions run page.
+  `ops/backend-ci.yml` uses it and keeps both reports as artifacts;
+  `ops/llm-eval-live.yml` is a manual and weekly live run. The DevOps engineer
+  copies both into `.github/workflows/` (`ops/README.md`).
+- **`/health`** adds `cache_backend`, `database` (whether the cache answered)
+  and `commit` (Railway's `RAILWAY_GIT_COMMIT_SHA`), so a release can be checked
+  on screen. It still answers 200 with the database down.
+- **Hosted review console:** `app/review_service.py` serves only the review
+  routes and `/health`, with CORS for the hosted page, and refuses to start
+  without its settings, an https origin, or two-step sign-in.
+  `review/build.mjs` builds the page for Vercel from environment variables, and
+  `review/vercel.json` now sets the build and allows `*.up.railway.app` and
+  `*.supabase.co`. The Dockerfile picks the service with `APP_MODULE`.
+- **Two-step sign-in is a switch** (Mon, 2026-11-14): `REVIEW_REQUIRE_MFA` (default on)
+  is read by the review service and by the Vercel build. Off lets reviewers sign in
+  with a password alone: for the demo or staging only. The service logs a warning at
+  startup and its `/health` shows `"two_step": "off"`. Turn it back on before real use
+  (`docs/runbook.md`, "Two-step off for the demo").
+
+**Decisions**
+- The review page goes on Vercel and its API on a second Railway service
+  (Mon, 2026-11-14), so the CRUD demo uses the deployed console.
+- Live eval isn't a required check and doesn't run on PRs: it shares the Groq
+  free tier with the app.
+
+**Checked:** full test suite and ruff on a cloud copy of the branch; Vercel
+build script run with and without its variables. Not yet checked against the
+real Railway, Vercel and Supabase Auth.
+
+---
+
+## 2026-11-11 - Web answers in the console; give-up says what the brand is
+
+**Asked by Mon.**
+
+**Added**
+- `migrations/0007_web_answers_review.sql` (**not yet run; run it before deploying**).
+- Web answers keep the page text they were summarized from.
+- Console tab "Web answers": Reject, and Send to kb (pending product, passage and
+  missing ingredients in one transaction, never approved).
+- `brand` tier: on the give-up for an unread strength of a listed brand, say what
+  the brand is, only if all its approved products agree. Never a strength.
+- A strength read with confidence that a listed brand doesn't list is treated as
+  an unlisted product, instead of a rescan.
+
+**Decisions**
+- A web page alone can't back a reviewed medicine: the passage's source stays box,
+  insert, pnf or tfd. The page text is prefilled only for a TheFilipinoDoctor page.
+- No scan count in this version.
+- The web answer isn't retired on approval. The dataset match runs first, so the
+  reviewed answer wins, and the web answer is a fallback if the row is un-approved.
+- The fall-through needs a reported OCR confidence above the caveat threshold:
+  unknown isn't "clear", and the app sends `null` today, so until it reports one
+  this stays a rescan. A misread digit printed in the OCR text can't be detected;
+  the tier's warning covers it.
+
+**Checked:** tests, including the SQL as the review role on a throwaway local
+Postgres 18.
+
+**Not checked:** 0007 on real Supabase. The give-up needs the app on `/v2/identify`
+sending `attempt`; `/identify` always counts attempt 1. New spoken wording still
+needs a listen on the phone's text-to-speech.
+
+---
+
 ## 2026-11-10 - Import staging drafts as pending rows
 
 **Asked by Mon:** move the drafts in `kb/staging/` into Supabase for review in

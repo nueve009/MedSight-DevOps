@@ -27,7 +27,7 @@ def _reset_postgres() -> None:
     with psycopg.connect(PG_URL, sslmode=PG_SSLMODE, autocommit=True) as conn:
         conn.execute("DROP TABLE IF EXISTS parses, answers, scan_log, rate_limits, audit_log, schema_version, "
                      "kb_passages, kb_products, kb_ingredients, kb_review_log, reviewers, kb_settings, "
-                     "kb_reviews, kb_evidence, kb_fda_lookups CASCADE")
+                     "kb_reviews, kb_evidence, kb_fda_lookups, kb_web_sends CASCADE")
         conn.execute("DROP FUNCTION IF EXISTS kb_contains_dosing, kb_split, kb_check_spoken, kb_check_approvable, "
                      "kb_content, kb_review_guard, kb_review_audit, kb_is_review_role, kb_reviews_append_only, "
                      "kb_delete_unapproved CASCADE")
@@ -97,6 +97,24 @@ def test_rejected_answers_are_a_miss_pending_ones_are_served(store):
     assert store.get_answer("pending")["status"] == "pending_review"
     assert store.get_answer("rejected") is None
     assert [a["cache_key"] for a in store.list_answers(status="rejected")] == ["rejected"]
+
+
+def test_the_page_text_is_kept_and_survives_a_backup(store):
+    store.set_answer("w", "web", PRODUCT, "From the web.", ["https://x.test"], "pending_review", "The page said this.")
+    assert store.read_answer("w")["page_text"] == "The page said this."
+    (exported,) = store.export_answers()
+    store.delete_answer("w")
+    store.import_answers([exported])
+    assert store.read_answer("w")["page_text"] == "The page said this."
+
+
+def test_a_backup_from_before_page_text_still_restores(store):
+    store.set_answer("w", "web", PRODUCT, "From the web.", ["https://x.test"])
+    (exported,) = store.export_answers()
+    exported.pop("page_text")
+    store.delete_answer("w")
+    assert store.import_answers([exported]) == 1
+    assert store.read_answer("w")["page_text"] == ""
 
 
 @pytest.mark.parametrize("tier, status", [("reviewed", "active"), ("ingredient", "active"), ("web", "verified")])

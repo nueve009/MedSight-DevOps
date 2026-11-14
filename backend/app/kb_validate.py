@@ -50,6 +50,11 @@ def split_list(value: str) -> list[str]:
     return [part.strip() for part in (value or "").split("|") if part.strip()]
 
 
+def derive_product_id(brand: str, strengths: list[str], form: str) -> str:
+    """'Testamol', ['500 mg'], 'Tablet' -> 'testamol-500-mg-tablet'"""
+    return re.sub(r"[^a-z0-9]+", "-", f"{brand} {' '.join(strengths)} {form}".lower()).strip("-")
+
+
 class Validator:
     def __init__(self):
         self.errors: list[str] = []

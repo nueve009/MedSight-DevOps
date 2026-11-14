@@ -16,6 +16,9 @@ in Supabase, and the deployed backend serves it within KB_REFRESH_S: no deploy.
     GET    /admin/kb/products/{key}/fda-candidates
     POST   /admin/kb/products/{key}/fda-pick   copy one candidate's FDA values in, as an edit
     GET    /admin/review/stats
+    GET    /admin/web-answers                  cached web answers still waiting
+    POST   /admin/web-answers/{key}/reject     stop speaking it; the next scan searches again
+    POST   /admin/web-answers/{key}/send       pending dataset rows from it; never approved
 
 Off unless ADMIN_ENABLED is on. Every route needs a reviewer (app/review_auth.py).
 Nothing here can approve what the database refuses (migrations/0006).
@@ -29,8 +32,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
-from app import config, speech
-from app.kb_validate import split_list, validate_rows
+from app import config, speech, web_search
+from app.kb_validate import derive_product_id, split_list, validate_rows
 from app.llm_parse import ParsedProduct
 from app.review_auth import Reviewer, require_reviewer
 from app.review_store import TABLES, Conflict, RowNotFound, RuleRefused, Table, Unavailable, get_storage, get_store
@@ -104,6 +107,18 @@ class ChangeRequest(BaseModel):
 class FdaPick(BaseModel):
     model_config = ConfigDict(extra="forbid")
     candidate_id: int
+
+
+class WebSend(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: str = Field("", max_length=120, description="Empty: made from the brand, strength and form.")
+    brand_name: str = Field(..., max_length=200)
+    generic_names: str = Field(..., max_length=1000)
+    strengths: str = Field(..., max_length=1000)
+    dosage_form: str = Field(..., max_length=200)
+    passage_text: str = Field(..., max_length=20000)
+    source_type: str = Field(..., max_length=20)
+    source_ref: str = Field(..., max_length=2000)
 
 
 def _table(name: str) -> Table:
@@ -358,6 +373,68 @@ def request_changes(table_name: str, key: str, body: ChangeRequest, request: Req
     get_store(request).request_changes(table, key, reviewer.name, note)
     log.info("review changes requested", extra={"fields": {"table": table.name, "key": key, "reviewer": reviewer.name}})
     return {"key": key}
+
+
+def _web_view(row: dict) -> dict:
+    """What a reviewer sees for one cached web answer, including what users hear today."""
+    product = ParsedProduct.from_dict(row["product"])
+    sources = row["source_urls"]
+    rx = row["product"].get("rx") is True
+    site = web_search.site_name(sources[0]) if sources else None
+    return {"cache_key": row["cache_key"], "brand": product.brand, "generics": list(product.generics),
+            "strengths": list(product.strengths), "description": row["description"], "sources": sources,
+            "site": site, "prescription": rx, "status": row["status"], "cached_at": row["created_at"],
+            "expires_at": row["expires_at"], "page_text": row["page_text"],
+            "spoken": speech.answer(product, speech.WEB, row["description"], rx=rx, source_site=site)}
+
+
+@router.get("/web-answers")
+def web_answers(request: Request, reviewer: ReviewerDep) -> list[dict]:
+    return [_web_view(r) for r in get_store(request).web_answers()]
+
+
+@router.post("/web-answers/{cache_key}/reject")
+def reject_web_answer(cache_key: str, request: Request, reviewer: ReviewerDep) -> dict:
+    get_store(request).reject_web_answer(cache_key, reviewer.name)
+    log.info("review web reject", extra={"fields": {"cache_key": cache_key, "reviewer": reviewer.name}})
+    return {"rejected": cache_key}
+
+
+def _refuse_web_only_source(source_type: str, source_ref: str) -> None:
+    """A web page isn't a reviewed source unless it's TheFilipinoDoctor (the `tfd` rule in kb_validate)."""
+    if source_type in ("box", "insert") and source_ref.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=422, detail=f"A {source_type} source needs the evidence photo, not a web link. "
+                                                    "A web page alone can't back a reviewed medicine.")
+
+
+@router.post("/web-answers/{cache_key}/send", status_code=201)
+def send_web_answer(cache_key: str, body: WebSend, request: Request, reviewer: ReviewerDep) -> dict:
+    store = get_store(request)
+    answer = store.web_answer(cache_key)
+    if answer is None:
+        raise HTTPException(status_code=404, detail="That answer is no longer waiting for review.")
+    values = {k: v.strip() for k, v in body.model_dump().items()}
+    required = ("brand_name", "generic_names", "strengths", "dosage_form", "passage_text", "source_type", "source_ref")
+    empty = [field for field in required if not values[field]]
+    if empty:
+        raise HTTPException(status_code=422, detail=f"These can't be empty: {', '.join(empty)}")
+    _refuse_web_only_source(values["source_type"], values["source_ref"])
+    product_id = values["product_id"] or derive_product_id(values["brand_name"], split_list(values["strengths"]),
+                                                           values["dosage_form"])
+    product = {**dict.fromkeys(TABLES["products"].fields, ""), "product_id": product_id,
+               "brand_name": values["brand_name"], "generic_names": values["generic_names"],
+               "strengths": values["strengths"], "dosage_form": values["dosage_form"],
+               "spoken_description": answer["description"], "entered_by": reviewer.name}
+    passage = {**dict.fromkeys(TABLES["passages"].fields, ""), "passage_id": f"{product_id}-ind-1",
+               "product_id": product_id, "section": "indications", "text": values["passage_text"],
+               "source_type": values["source_type"], "source_ref": values["source_ref"], "entered_by": reviewer.name}
+    _refuse_draft(TABLES["products"], product)
+    _refuse_draft(TABLES["passages"], passage)
+    source = answer["source_urls"][0] if answer["source_urls"] else "unknown"
+    added = store.send_web_answer(cache_key, reviewer.name, product, passage, f"Sent from a web answer: {source}")
+    log.info("review web send", extra={"fields": {"cache_key": cache_key, "key": product_id,
+                                                  "reviewer": reviewer.name}})
+    return {"product_id": product_id, "ingredients_added": added}
 
 
 def image_type(data: bytes) -> Optional[tuple[str, str]]:
