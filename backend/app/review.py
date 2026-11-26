@@ -249,8 +249,14 @@ def meta(reviewer: ReviewerDep) -> dict:
 
 @router.get("/kb/queue")
 def queue(request: Request, reviewer: ReviewerDep, table: Optional[str] = None,
-          q: str = Query("", max_length=100)) -> list[dict]:
+           q: str = Query("", max_length=100)) -> list[dict]:
     return get_store(request).queue(_table(table) if table else None, q.strip(), reviewer.name)
+
+@router.get("/kb/queue-page")
+def queue_page(request: Request, reviewer: ReviewerDep, table: Optional[str] = None,
+               q: str = Query("", max_length=100), page: int = Query(1, ge=1),
+               sort: str = Query("oldest", pattern="^(oldest|newest|name_asc|name_desc|updated)$")) -> dict:
+    return get_store(request).queue_page(_table(table) if table else None, q.strip(), reviewer.name, page, sort)
 
 
 @router.get("/kb/mine")

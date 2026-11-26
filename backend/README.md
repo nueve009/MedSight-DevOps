@@ -111,6 +111,13 @@ Interactive API docs are at `/docs` when `API_DOCS=on` (set it in your local
 `.env`). They're off by default, so a deployed service doesn't publish its
 schema.
 
+The review console uses `GET /admin/kb/queue-page` for its Waiting for Review
+screen. It accepts `table` (products, ingredients or passages), `q` (plain-text
+search), `page` (starting at 1) and `sort` (`oldest`, `newest`, `name_asc`,
+`name_desc` or `updated`). The response contains `items`, `total`, `page` and
+`page_size` (20). The older `/admin/kb/queue` list remains available to
+existing clients.
+
 ## Admin routes (M7)
 
 Off unless `ADMIN_ENABLED=on`: every `/admin` path is a 404 until then. Each
