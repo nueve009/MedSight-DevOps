@@ -5,6 +5,33 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-27 - eval_kb can read the approved rows from Supabase; first phone eval photos
+
+**Asked by Mon.**
+
+- `scripts/eval_kb.py --kb-source {sqlite,postgres}`. `postgres` reads the
+  approved `kb_*` rows with the server's own loader (`kb_source.load_from_postgres`,
+  read-only transaction, `KB_DATABASE_URL` or `DATABASE_URL`), so no
+  `kb_build --pull` is needed first. The default is `postgres` when
+  `KB_BACKEND=postgres`, else `sqlite` (unchanged). It prints the number of
+  approved products and the `kb_version`, and stops when none are approved.
+  A load error prints only the error class, never the connection string.
+  Tests in `tests/test_kb_scripts.py` use a fake loader.
+- `.gitignore`: `kb/eval/photos/` (the team's phone photos) and
+  `kb/eval/scans_draft.jsonl` (unlabeled OCR drafts) stay local.
+- First 24 phone photos (6 products x 4) OCR'd with PaddleOCR into
+  `kb/eval/scans_draft.jsonl` with a `suggested_expected` per line; `expected`
+  stays null until a teammate confirms. Solmux Advance, Ascof Lagundi and the
+  generic "Actimed" loperamide are suggested `not_listed`.
+
+**Open items**
+- PaddleOCR (3.7, CPU) segfaults on the full-size 2268x4032 photos; the OCR ran on
+  copies downscaled to 900x1600. `kb_make_scans` could downscale itself.
+- The Biogesic photos don't show "Paracetamol" (only the brand and 500 mg), so a
+  reviewed match may not be possible from them.
+
+---
+
 ## 2026-11-14 - Two web-tier bugs found in the live Tavily test
 
 **Asked by Mon.** A live test (real Tavily and Groq, temp data folder) of an unlisted

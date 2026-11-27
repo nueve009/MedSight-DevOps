@@ -134,3 +134,53 @@ def test_cli_exits_1_on_a_wrong_answer(fake_llm, monkeypatch, tmp_path, capsys):
     assert e.value.code == 1
     assert "WRONG  bad-1: expected not_listed, got reviewed biogesic-500-tab" in capsys.readouterr().out
     assert json.loads(out.read_text(encoding="utf-8"))["wrong_reviewed_answers"] == 1
+
+
+# --- eval_kb --kb-source ---
+
+@pytest.mark.parametrize("backend, source", [("postgres", "postgres"), ("sqlite", "sqlite"), ("memory", "sqlite")])
+def test_default_kb_source_follows_kb_backend(monkeypatch, backend, source):
+    monkeypatch.setattr(eval_kb.config, "KB_BACKEND", backend)
+    assert eval_kb.default_kb_source() == source
+
+
+def test_postgres_source_uses_the_server_loader(monkeypatch, tmp_path, capsys):
+    kb = build_kb(tmp_path)
+    calls = []
+
+    def fake_load(conninfo):
+        calls.append(conninfo)
+        return kb, ["kb_products:x: a dropped row"]
+
+    monkeypatch.setattr(eval_kb.config, "KB_DATABASE_URL", "postgresql://fake")
+    monkeypatch.setattr(eval_kb.kb_source, "load_from_postgres", fake_load)
+    assert eval_kb.load_kb("postgres", None) is kb
+    assert calls == ["postgresql://fake"]
+    out = capsys.readouterr().out
+    assert f"{len(kb.products)} approved products, kb_version {kb.version}" in out
+    assert "Approved row not served: kb_products:x: a dropped row" in out
+
+
+def test_postgres_source_needs_a_connection_string(monkeypatch):
+    monkeypatch.setattr(eval_kb.config, "KB_DATABASE_URL", "")
+    monkeypatch.setattr(eval_kb.config, "DATABASE_URL", "")
+    with pytest.raises(SystemExit, match="needs KB_DATABASE_URL or DATABASE_URL"):
+        eval_kb.load_kb("postgres", None)
+
+
+def test_postgres_load_error_hides_the_connection_string(monkeypatch):
+    def boom(conninfo):
+        raise RuntimeError(f"cannot connect to {conninfo}")
+
+    monkeypatch.setattr(eval_kb.config, "KB_DATABASE_URL", "postgresql://user:secret@host/db")
+    monkeypatch.setattr(eval_kb.kb_source, "load_from_postgres", boom)
+    with pytest.raises(SystemExit) as e:
+        eval_kb.load_kb("postgres", None)
+    assert "secret" not in str(e.value) and "RuntimeError" in str(e.value)
+
+
+def test_exits_when_no_products_are_approved(monkeypatch):
+    monkeypatch.setattr(eval_kb.config, "KB_DATABASE_URL", "postgresql://fake")
+    monkeypatch.setattr(eval_kb.kb_source, "load_from_postgres", lambda c: (eval_kb.KnowledgeBase(), []))
+    with pytest.raises(SystemExit, match="No approved products"):
+        eval_kb.load_kb("postgres", None)

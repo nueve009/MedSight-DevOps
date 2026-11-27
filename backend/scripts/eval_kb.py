@@ -6,9 +6,11 @@ The release gate (development plan, section 8): 0 wrong reviewed answers on
 at least 100 labeled scans, and at least 95% of unlisted medicines not
 matched. The script exits with code 1 if any reviewed answer is wrong.
 
-It calls the real LLM (whatever LLM_PROVIDER says) and uses the built
-dataset (data/kb.sqlite, from scripts.kb_build), with a fresh temporary cache
-so earlier answers can't hide a problem.
+It calls the real LLM (whatever LLM_PROVIDER says) and uses either the built
+dataset (data/kb.sqlite, from scripts.kb_build) or, with --kb-source postgres,
+the approved rows in Supabase, read the same way the server reads them
+(app/kb_source.py, KB_DATABASE_URL or DATABASE_URL, a read-only transaction).
+A fresh temporary cache is used so earlier answers can't hide a problem.
 
 Each line of kb/eval/scans.jsonl:
     {"id": "biogesic-phone-1", "ocr_text": "BIOGESIC\\nParacetamol 500 mg", "ocr_confidence": 0.91,
@@ -16,7 +18,10 @@ Each line of kb/eval/scans.jsonl:
      "expected": "biogesic-500-tab"}     or "not_listed", "multiple", "rescan"
 
 Usage:
-    python -m scripts.eval_kb [--scans kb/eval/scans.jsonl] [--kb-db data/kb.sqlite] [--out report.json]
+    python -m scripts.eval_kb [--scans kb/eval/scans.jsonl] [--kb-source sqlite|postgres]
+                              [--kb-db data/kb.sqlite] [--out report.json]
+
+--kb-source defaults to postgres when KB_BACKEND=postgres, else sqlite.
 """
 import argparse
 import json
@@ -26,7 +31,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app import config, llm_client
+from app import config, kb_source, llm_client
 from app.pipeline import ScanRequest, identify_scan
 from app.retrieval import KnowledgeBase
 from app.scan_rules import Block
@@ -115,17 +120,43 @@ def evaluate(scans: list[dict], kb: KnowledgeBase, cache: Store) -> dict:
     }
 
 
+def default_kb_source() -> str:
+    return "postgres" if config.KB_BACKEND == "postgres" else "sqlite"
+
+
+def load_kb(source: str, kb_db: Path | None) -> KnowledgeBase:
+    """The reviewed dataset to evaluate against; exits with a clear message when it can't be used."""
+    if source == "postgres":
+        conninfo = kb_source.kb_conninfo()
+        if not conninfo:
+            sys.exit("--kb-source postgres needs KB_DATABASE_URL or DATABASE_URL")
+        try:
+            kb, dropped = kb_source.load_from_postgres(conninfo)
+        except Exception as e:   # never print the connection string
+            sys.exit(f"Could not read the approved rows from Postgres ({type(e).__name__}).")
+        for error in dropped:
+            print(f"Approved row not served: {error}")
+    else:
+        kb_db = kb_db or config.KB_DB_PATH
+        if not kb_db.exists():
+            sys.exit(f"{kb_db} not found. Build the dataset first: python -m scripts.kb_build")
+        kb = KnowledgeBase.load(kb_db)
+    print(f"Dataset ({source}): {len(kb.products)} approved products, kb_version {kb.version}")
+    if not kb.products:
+        sys.exit("No approved products in the dataset: approve rows first (or build data/kb.sqlite).")
+    return kb
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the labeled scans and report wrong reviewed answers.")
     parser.add_argument("--scans", type=Path, default=config.KB_DIR / "eval" / "scans.jsonl")
-    parser.add_argument("--kb-db", type=Path, default=None, help="default: data/kb.sqlite")
+    parser.add_argument("--kb-source", choices=("sqlite", "postgres"), default=None,
+                        help="default: postgres when KB_BACKEND=postgres, else sqlite")
+    parser.add_argument("--kb-db", type=Path, default=None, help="sqlite only; default: data/kb.sqlite")
     parser.add_argument("--out", type=Path, help="write the full report as JSON")
     args = parser.parse_args()
 
-    kb_db = args.kb_db or config.KB_DB_PATH
-    if not kb_db.exists():
-        sys.exit(f"{kb_db} not found. Build the dataset first: python -m scripts.kb_build")
-    kb = KnowledgeBase.load(kb_db)
+    kb = load_kb(args.kb_source or default_kb_source(), args.kb_db)
     scans = load_scans(args.scans, kb)
     if not scans:
         sys.exit(f"No scans in {args.scans}.")
