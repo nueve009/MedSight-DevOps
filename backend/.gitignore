@@ -102,3 +102,7 @@ evidence/
 kb/staging/
 
 kb/staging/
+
+# Team's eval photos (kept in the shared drive) and the OCR drafts made from them
+kb/eval/photos/
+kb/eval/scans_draft.jsonl

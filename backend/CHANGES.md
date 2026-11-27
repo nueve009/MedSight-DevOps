@@ -113,6 +113,69 @@ can pick up where the last session left off. Newest entry first.
   run: the existing `.venv` contains only pip/setuptools. Expo lint and
   TypeScript checks also couldn't run because the root JS dependencies aren't
   installed; `npx` tried to download unrelated CLI packages.
+ 
+--- 
+ 
+## 2026-11-27 - Parse: the maker is not the brand; trademark symbols stripped from names
+
+**Asked by Mon.** Found in the phone-photo eval: Ascof Lagundi photos without
+the ASCOF logo were spoken as "Pascual", and Solmux_Advance_4 spoke
+"Solmux® ADVANCE" (a real U+00AE in the PaddleOCR text, not mojibake).
+
+- `PARSE_SYSTEM_PROMPT` rule: `brand_name` is the product's own trade name,
+  never the manufacturer, distributor or marketer (Unilab, Pascual,
+  "Manufactured by ..."); only the maker printed -> `""`.
+  `PARSE_PROMPT_VERSION` 2 -> 3, so cached parses from the old prompt are not reused.
+- `utils.clean_name`, used by `llm_parse._text` for brand and ingredient names
+  only: symbol characters (So: ®, ™, ©, ℠, °) and control characters (Cc)
+  become a space; format (Cf), private-use (Co) and surrogate (Cs) characters
+  are removed; whitespace collapsed. Letters (accented too), digits and
+  punctuation stay. Strengths are not touched (µg/μg kept).
+- Tests: `tests/test_llm_parse.py` (Solmux®, Biogesic™, "Tempra ® Forte",
+  zero-width/soft hyphen, private use, accents kept, µg strengths unchanged).
+  LLM eval cases: `maker-only-no-brand`, `brand-not-maker-solmux`,
+  `bad-model-trademark-symbol` (offline only). Offline eval 24/24.
+
+---
+
+## 2026-11-27 - eval_kb paces scans and retries on the rate limit
+
+**Asked by Mon.**
+
+- `scripts/eval_kb.py --pace SECONDS` (default 4, as in `eval_llm.py` live mode)
+  waits between scans and prints `[i/N] id` for each one.
+- On `LLMUnavailableError` from a Groq 429 ("rate limit") the scan is retried
+  after 30 s, then 60 s. If it is still rate-limited the run stops with exit
+  code 2 and a message naming the scan; no report is written and nothing is
+  counted as wrong. Other LLM errors are not retried (exit 1, as before).
+- Tests in `tests/test_kb_scripts.py` patch `time.sleep` out (no network).
+
+---
+
+## 2026-11-27 - eval_kb can read the approved rows from Supabase; first phone eval photos
+
+**Asked by Mon.**
+
+- `scripts/eval_kb.py --kb-source {sqlite,postgres}`. `postgres` reads the
+  approved `kb_*` rows with the server's own loader (`kb_source.load_from_postgres`,
+  read-only transaction, `KB_DATABASE_URL` or `DATABASE_URL`), so no
+  `kb_build --pull` is needed first. The default is `postgres` when
+  `KB_BACKEND=postgres`, else `sqlite` (unchanged). It prints the number of
+  approved products and the `kb_version`, and stops when none are approved.
+  A load error prints only the error class, never the connection string.
+  Tests in `tests/test_kb_scripts.py` use a fake loader.
+- `.gitignore`: `kb/eval/photos/` (the team's phone photos) and
+  `kb/eval/scans_draft.jsonl` (unlabeled OCR drafts) stay local.
+- First 24 phone photos (6 products x 4) OCR'd with PaddleOCR into
+  `kb/eval/scans_draft.jsonl` with a `suggested_expected` per line; `expected`
+  stays null until a teammate confirms. Solmux Advance, Ascof Lagundi and the
+  generic "Actimed" loperamide are suggested `not_listed`.
+
+**Open items**
+- PaddleOCR (3.7, CPU) segfaults on the full-size 2268x4032 photos; the OCR ran on
+  copies downscaled to 900x1600. `kb_make_scans` could downscale itself.
+- The Biogesic photos don't show "Paracetamol" (only the brand and 500 mg), so a
+  reviewed match may not be possible from them.
 
 ---
 
