@@ -61,6 +61,17 @@ def test_queue_hides_your_own_rows_and_filters(store):
     assert store.queue(PRODUCTS, "nothing", "Ben") == []
     assert store.queue(PRODUCTS, "%", "Ben") == []   # a search is plain text, not a pattern
 
+def test_queue_page_sorts_across_tables_and_reports_total(store):
+    first = store.queue_page(None, "", "Ben")
+    assert first["total"] == 2 and first["page_size"] == 20
+    assert {row["key"] for row in first["items"]} == {"Fakeamol", "testflu-500-tab"}
+    assert all(row["created_at"] for row in first["items"])
+    assert [row["key"] for row in store.queue_page(None, "", "Ben", sort="name_asc")["items"]] == [
+        "Fakeamol", "testflu-500-tab"]
+    assert store.queue_page(None, "", "Ben", page=2)["items"] == []
+    assert store.queue_page(PRODUCTS, "flu", "Ben")["total"] == 1
+    assert store.queue_page(None, "", "Ana")["total"] == 0
+
 
 def test_queue_hides_the_last_editors_rows(store):
     store.update_row(PRODUCTS, "testflu-500-tab", {"aliases": "TF"}, "Cy")

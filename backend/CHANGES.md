@@ -5,6 +5,117 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-27 - Hosted review build test includes logo
+
+- The Vercel build test now copies `Medsight-Logo-Light.png` into its
+  temporary review folder and checks the built asset matches the source.
+  The PNG was already tracked at `backend/review/Medsight-Logo-Light.png`.
+
+---
+
+## 2026-11-26 - Compact password visibility control
+
+- Replaced the sign-in Show password text with a small eye icon in a 44px
+  button. Its icon, accessible label and pressed state update when toggled.
+
+---
+
+## 2026-11-26 - Row detail card positions
+
+- Swapped Decision and What the user will hear on row detail pages.
+  Decision now sits below Values; the spoken preview sits below Evidence
+  (and FDA candidates for products).
+
+---
+
+## 2026-11-26 - Clearer separators and product edit button
+
+- Add/Edit row and web-answer form guidance quotes the literal separators
+  `"|"` and `","`; lists use the pipe, not the comma.
+- Product detail pages now show a real Edit this row button with the existing
+  button interaction states. Other row types keep their edit links.
+
+---
+
+## 2026-11-26 - Sign-in password visibility and form hints
+
+- Sign-in has a Show/Hide password button with an accessible pressed state;
+  it does not submit the form or change the entered password.
+- Add and Edit row labels show parenthesized format guidance for dates,
+  pipe-separated values, IDs and other constrained fields.
+
+---
+
+## 2026-11-26 - Review navbar logo
+
+- Added `review/Medsight-Logo-Light.png` beside the review console brand
+  text, on a dark tile so the white icon stays visible in both themes.
+  The Vercel build now copies the image into `dist/`.
+
+---
+
+## 2026-11-26 - Match the supplied icon
+
+- A valid ICO file is now present at `review/favicon.ico`. The running local
+  console served it with HTTP 200 while the previous PNG link returned 404.
+  The HTML icon link and Vercel build copy now target this actual ICO file.
+
+---
+
+## 2026-11-26 - Correct review favicon format
+
+- The supplied `favicon.ico` contains PNG bytes, not ICO bytes. Renamed it
+  `review/favicon.png` and updated the page icon link and hosted build copy.
+  Chrome may still need a hard refresh or a new tab to clear its cached icon.
+
+---
+
+## 2026-11-26 - Review console favicon support
+
+- `review/index.html` links to `favicon.ico`; the hosted build copies
+  `review/favicon.ico` into `dist/` when the file exists. Add the icon file
+  there when ready; builds still work without it.
+
+---
+
+## 2026-11-26 - Review queue totals cards and search layout
+
+- Table, Sort by and Search now appear in that order. All still take effect
+  only when Apply filters is pressed.
+- The live products, ingredients, passages and FDA candidate counts are shown
+  as four responsive cards instead of one line. Totals have loading and error
+  states; no example counts are hardcoded.
+
+---
+
+## 2026-11-26 - Review navigation and filter controls
+
+- Navigation links now look and respond like buttons on hover and press, with
+  an active-page indicator and reduced-motion support. They remain links for
+  keyboard and browser navigation.
+- Search appears before Table and Sort. None of the filter controls changes
+  results until Apply filters is pressed.
+
+---
+
+## 2026-11-26 - Review console usability refresh
+
+- Waiting for Review now has server-side sorting across all three tables, a
+  total count and 20 items per page (`/admin/kb/queue-page`). The original
+  queue route remains unchanged. Search and filters reset pagination.
+- Responsive queue cards show name, type and date added. The console follows
+  the device's light/dark appearance with a #FFD60A action accent; buttons
+  have hover and press feedback, with reduced-motion support.
+- Screen transitions, queue requests and form submissions show loading
+  feedback; queue failures keep the current results and provide Retry.
+- Added API and optional Postgres coverage for paging. Python compilation and
+  `node --check review/review.js` passed. Automated tests and Ruff couldn't
+  run: the existing `.venv` contains only pip/setuptools. Expo lint and
+  TypeScript checks also couldn't run because the root JS dependencies aren't
+  installed; `npx` tried to download unrelated CLI packages.
+ 
+--- 
+ 
 ## 2026-11-27 - Parse: the maker is not the brand; trademark symbols stripped from names
 
 **Asked by Mon.** Found in the phone-photo eval: Ascof Lagundi photos without

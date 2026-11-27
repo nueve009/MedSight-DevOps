@@ -18,6 +18,19 @@ const FLAGS = {
 };
 const STATE_BADGE = { pending: "warn", changes_requested: "bad", approved: "good" };
 const LONG_FIELDS = new Set(["text", "spoken_description", "synonyms"]);
+const FIELD_HINTS = {
+  product_id: "lowercase letters, numbers and dashes",
+  aliases: 'separate multiple names with "|", not ","',
+  generic_names: 'separate ingredients with "|", not ","',
+  strengths: 'separate with "|", not ",", in ingredient order',
+  synonyms: 'separate multiple names with "|", not ","',
+  reg_expiry: "YYYY-MM-DD",
+  portal_checked_on: "YYYY-MM-DD",
+  fda_reg_no: "e.g. DR-XY12345",
+  source_url: "URL",
+  spoken_description: "300 characters maximum; no dosing advice",
+  source_ref: "source link or photo reference",
+};
 const CHOICES = {
   classification: ["", "OTC", "Rx", "HR"],
   pnf_listed: ["no", "yes"],
@@ -27,6 +40,7 @@ const CHOICES = {
 
 let session = loadSession();
 let meta = null;
+const queueView = { table: "", search: "", sort: "oldest", page: 1 };
 
 // --- small helpers ---
 
@@ -58,6 +72,23 @@ function say(message, kind = "ok") {
 
 function clearSay() {
   say("");
+}
+
+function busy(button, label) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  button.setAttribute("aria-busy", "true");
+  return () => {
+    button.disabled = false;
+    button.textContent = original;
+    button.removeAttribute("aria-busy");
+  };
+}
+
+function loading(label) {
+  return el("div", { class: "loading", role: "status", "aria-live": "polite" },
+    el("span", { class: "spinner", "aria-hidden": "true" }), label);
 }
 
 function loadSession() {
@@ -158,6 +189,33 @@ function rowLink(table, key) {
 
 // --- signing in ---
 
+function eyeIcon(visible) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  const outline = document.createElementNS(ns, "path");
+  outline.setAttribute("d", "M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z");
+  const pupil = document.createElementNS(ns, "circle");
+  pupil.setAttribute("cx", "12");
+  pupil.setAttribute("cy", "12");
+  pupil.setAttribute("r", "2.5");
+  svg.append(outline, pupil);
+  if (visible) {
+    const slash = document.createElementNS(ns, "path");
+    slash.setAttribute("d", "M4 20 20 4");
+    svg.append(slash);
+  }
+  return svg;
+}
+
 function signedOut(message) {
   saveSession(null);
   meta = null;
@@ -167,12 +225,29 @@ function signedOut(message) {
 
 function showSignIn(message) {
   const email = el("input", { type: "email", autocomplete: "username", required: true });
-  const password = el("input", { type: "password", autocomplete: "current-password", required: true });
+  const password = el("input", { id: "review-password", type: "password", autocomplete: "current-password", required: true });
+  const visibility = el("button", {
+    type: "button",
+    class: "quiet password-toggle",
+    "aria-controls": "review-password",
+    "aria-pressed": "false",
+    "aria-label": "Show password",
+    title: "Show password",
+    onclick: () => {
+      const showing = password.type === "password";
+      password.type = showing ? "text" : "password";
+      const label = showing ? "Hide password" : "Show password";
+      visibility.replaceChildren(eyeIcon(showing));
+      visibility.setAttribute("aria-label", label);
+      visibility.title = label;
+      visibility.setAttribute("aria-pressed", String(showing));
+    },
+  }, eyeIcon(false));
   const button = el("button", { type: "submit" }, "Sign in");
   const form = el("form", {
     onsubmit: async (event) => {
       event.preventDefault();
-      button.disabled = true;
+      const done = busy(button, "Signing in…");
       clearSay();
       try {
         keepTokens(await auth("/token?grant_type=password", {
@@ -187,12 +262,13 @@ function showSignIn(message) {
         }
       } catch (error) {
         say(error.message, "error");
-        button.disabled = false;
+        done();
       }
     },
   },
   el("label", {}, "Email", email),
-  el("label", {}, "Password", password),
+  el("label", { htmlFor: "review-password" }, "Password"),
+  el("div", { class: "password-field" }, password, visibility),
   button);
   if (message) say(message, "error");
   show(el("section", { class: "card narrow" }, el("h1", {}, "MedSight Review"), form));
@@ -224,7 +300,7 @@ function showCodeScreen(factorId, intro, totp) {
   const form = el("form", {
     onsubmit: async (event) => {
       event.preventDefault();
-      button.disabled = true;
+      const done = busy(button, "Checking code…");
       clearSay();
       try {
         const path = `/factors/${encodeURIComponent(factorId)}`;
@@ -238,7 +314,7 @@ function showCodeScreen(factorId, intro, totp) {
         await start();
       } catch (error) {
         say(error.message, "error");
-        button.disabled = false;
+        done();
       }
     },
   },
@@ -279,42 +355,112 @@ async function showQueue() {
   const table = el("select", {},
     el("option", { value: "" }, "All tables"),
     ...["products", "ingredients", "passages"].map((t) => el("option", { value: t }, t)));
-  const search = el("input", { type: "text", placeholder: "Brand or ID" });
+  table.value = queueView.table;
+  const search = el("input", { type: "text", placeholder: "Brand or ID", value: queueView.search });
+  const sort = el("select", {},
+    ...[["oldest", "Oldest added first"], ["newest", "Newest added first"],
+      ["name_asc", "Name A–Z"], ["name_desc", "Name Z–A"],
+      ["updated", "Recently updated"]].map(([value, label]) => el("option", { value }, label)));
+  sort.value = queueView.sort;
   const results = el("div", {});
-  const stats = el("p", { class: "stats" });
+  const pagination = el("div", { class: "pagination" });
+  const stats = el("section", { class: "stats-grid", "aria-label": "Review totals" },
+    loading("Loading review totals…"));
+  const feedback = el("div", { class: "queue-feedback", role: "status", "aria-live": "polite" });
+  let request = 0;
 
   async function load() {
+    const current = ++request;
+    feedback.replaceChildren(loading("Updating results…"));
+    results.setAttribute("aria-busy", "true");
     try {
       const params = new URLSearchParams();
-      if (table.value) params.set("table", table.value);
-      if (search.value.trim()) params.set("q", search.value.trim());
-      results.replaceChildren(rowsTable(await api(`/admin/kb/queue?${params}`), "Nothing is waiting for you to review."));
+      if (queueView.table) params.set("table", queueView.table);
+      if (queueView.search) params.set("q", queueView.search);
+      params.set("sort", queueView.sort);
+      params.set("page", String(queueView.page));
+      const data = await api(`/admin/kb/queue-page?${params}`);
+      if (current !== request) return;
+      if (data.total && queueView.page > Math.ceil(data.total / 20)) {
+        queueView.page = Math.ceil(data.total / 20);
+        return load();
+      }
+      const empty = queueView.table || queueView.search
+        ? "No items match your filters." : "You're all caught up. Nothing is waiting for review.";
+      results.replaceChildren(queueRows(data.items, empty));
+      const start = data.total ? (queueView.page - 1) * 20 + 1 : 0;
+      const end = Math.min(queueView.page * 20, data.total);
+      const previous = el("button", { type: "button", class: "quiet", disabled: queueView.page === 1,
+        onclick: () => { queueView.page--; load(); } }, "Previous");
+      const next = el("button", { type: "button", class: "quiet", disabled: end >= data.total,
+        onclick: () => { queueView.page++; load(); } }, "Next");
+      pagination.replaceChildren(el("span", {}, `${start}–${end} of ${data.total} · Page ${queueView.page} of ${Math.max(1, Math.ceil(data.total / 20))}`),
+        el("div", { class: "row-actions" }, previous, next));
+      feedback.replaceChildren();
     } catch (error) {
-      say(error.message, "error");
+      if (current !== request) return;
+      feedback.replaceChildren(el("span", { class: "error-text" }, error.message), " ",
+        el("button", { type: "button", class: "quiet", onclick: load }, "Retry"));
+    } finally {
+      if (current === request) results.removeAttribute("aria-busy");
     }
   }
 
+  const clear = el("button", { type: "button", class: "quiet", hidden: !queueView.table && !queueView.search,
+    onclick: () => {
+      table.value = "";
+      search.value = "";
+      queueView.table = "";
+      queueView.search = "";
+      queueView.page = 1;
+      clear.hidden = true;
+      load();
+    } }, "Clear filters");
   const form = el("form", {
     class: "filters",
     onsubmit: (event) => {
       event.preventDefault();
+      queueView.table = table.value;
+      queueView.search = search.value.trim();
+      queueView.sort = sort.value;
+      queueView.page = 1;
+      clear.hidden = !queueView.table && !queueView.search;
       load();
     },
   },
   el("label", {}, "Table", table),
+  el("label", {}, "Sort by", sort),
   el("label", {}, "Search", search),
-  el("button", { type: "submit" }, "Filter"));
+  el("button", { type: "submit" }, "Apply filters"),
+  clear);
 
-  show(el("h1", {}, "Waiting for review"), stats, form, el("section", { class: "card" }, results));
+  results.replaceChildren(loading("Loading review queue…"));
+  show(el("h1", {}, "Waiting for review"), stats, form, feedback,
+    el("section", { class: "card" }, results), pagination);
   await load();
   try {
     const counts = await api("/admin/review/stats");
-    const line = ["products", "ingredients", "passages"]
-      .map((t) => `${t}: ${counts[t].pending} pending, ${counts[t].approved} approved`).join(" · ");
-    stats.textContent = `${line} · FDA candidates: ${counts.fda_candidates}`;
-  } catch {
-    stats.textContent = "";
+    stats.replaceChildren(...["products", "ingredients", "passages"].map((name) =>
+      el("article", { class: "stat-card" },
+        el("h2", {}, name[0].toUpperCase() + name.slice(1)),
+        el("p", {}, el("strong", {}, String(counts[name].pending)), " pending"),
+        el("p", {}, el("strong", {}, String(counts[name].approved)), " approved"))),
+    el("article", { class: "stat-card" },
+      el("h2", {}, "FDA candidates"),
+      el("p", {}, el("strong", {}, String(counts.fda_candidates)), " candidates")));
+  } catch (error) {
+    stats.replaceChildren(el("p", { class: "muted" }, `Review totals unavailable: ${error.message}`));
   }
+}
+
+function queueRows(rows, emptyText) {
+  if (!rows.length) return el("p", { class: "muted" }, emptyText);
+  return el("div", { class: "queue-list" }, ...rows.map((row) =>
+    el("article", { class: "queue-item" },
+      el("div", {},
+        el("a", { class: "queue-link", href: rowLink(row.table_name, row.key) }, row.label || row.key),
+        el("p", { class: "muted" }, `${row.table_name} · Added ${new Date(row.created_at).toLocaleDateString()}`)),
+      stateBadge(row))));
 }
 
 async function showMine() {
@@ -372,7 +518,7 @@ function evidenceCard(table, key, evidence, reload) {
   const form = el("form", {
     onsubmit: async (event) => {
       event.preventDefault();
-      button.disabled = true;
+      const done = busy(button, "Uploading…");
       try {
         const data = new FormData();
         data.append("kind", kind.value);
@@ -382,7 +528,7 @@ function evidenceCard(table, key, evidence, reload) {
         await reload();
       } catch (error) {
         say(error.message, "error");
-        button.disabled = false;
+        done();
       }
     },
   },
@@ -410,14 +556,14 @@ function candidateNode(key, candidate, reload) {
     class: "quiet",
     disabled: candidate.export_only,
     onclick: async () => {
-      pick.disabled = true;
+      const done = busy(pick, "Copying…");
       try {
         await api(kb("products", key, "/fda-pick"), { method: "POST", json: { candidate_id: candidate.id } });
         say("FDA values copied. This counts as your edit, so someone else must approve the row.");
         await reload();
       } catch (error) {
         say(error.message, "error");
-        pick.disabled = false;
+        done();
       }
     },
   }, "Use these values");
@@ -456,7 +602,7 @@ function decisionCard(table, key, data, reload) {
     label: item.label,
   }));
   approve.addEventListener("click", async () => {
-    approve.disabled = true;
+    const done = busy(approve, "Saving review…");
     try {
       const checklist = Object.fromEntries(boxes.map((b) => [b.key, b.input.checked]));
       await api(kb(table, key, "/approve"), { method: "POST", json: { checklist, version: data.version } });
@@ -464,6 +610,7 @@ function decisionCard(table, key, data, reload) {
       location.hash = "#/queue";
     } catch (error) {
       say(error.message, "error");
+      done();
       approve.disabled = !boxes.every((b) => b.input.checked);
     }
   });
@@ -473,14 +620,14 @@ function decisionCard(table, key, data, reload) {
   const changes = el("form", {
     onsubmit: async (event) => {
       event.preventDefault();
-      send.disabled = true;
+      const done = busy(send, "Saving review…");
       try {
         await api(kb(table, key, "/request-changes"), { method: "POST", json: { note: note.value } });
         say("Changes requested.");
         await reload();
       } catch (error) {
         say(error.message, "error");
-        send.disabled = false;
+        done();
       }
     },
   },
@@ -503,15 +650,18 @@ async function showRow(table, key) {
     el("section", { class: "card" }, el("h2", {}, "Values"), valuesTable(data.row, fields),
       data.row.review_note ? el("p", { class: "notice" }, `Reviewer's note: ${data.row.review_note}`) : null,
       el("div", { class: "row-actions" },
-        el("a", { href: `#/edit/${encodeURIComponent(table)}/${encodeURIComponent(key)}` }, "Edit this row"),
+        table === "products"
+          ? el("button", { type: "button",
+            onclick: () => { location.hash = `#/edit/${encodeURIComponent(table)}/${encodeURIComponent(key)}`; } }, "Edit this row")
+          : el("a", { href: `#/edit/${encodeURIComponent(table)}/${encodeURIComponent(key)}` }, "Edit this row"),
         deleteButton(table, key, data.row))),
-    previewCard(data.spoken_preview),
+    decisionCard(table, key, data, reload),
     historyCard(data.history),
   ];
   const right = [
     evidenceCard(table, key, data.evidence, reload),
     table === "products" ? await fdaCard(key, reload) : null,
-    decisionCard(table, key, data, reload),
+    previewCard(data.spoken_preview),
   ];
   show(el("h1", {}, key),
     el("p", {}, el("span", { class: "badge" }, table), stateBadge(data.row)),
@@ -554,16 +704,17 @@ function rowForm(table, fields, row, onSubmit, submitLabel) {
   return el("form", {
     onsubmit: async (event) => {
       event.preventDefault();
-      button.disabled = true;
+      const done = busy(button, "Saving…");
       try {
         await onSubmit(Object.fromEntries(inputs.map(({ field, input }) => [field, input.value])));
       } catch (error) {
         say(error.message, "error");
-        button.disabled = false;
+        done();
       }
     },
   },
-  ...inputs.map(({ field, input }) => el("label", {}, field, input)),
+  ...inputs.map(({ field, input }) =>
+    el("label", {}, FIELD_HINTS[field] ? `${field} (${FIELD_HINTS[field]})` : field, input)),
   button);
 }
 
@@ -623,13 +774,13 @@ function sendForm(answer) {
     source_ref: el("input", { type: "text", value: tfd ? source : "", placeholder: "Photo name, or the TheFilipinoDoctor link" }),
     passage_text: el("textarea", { value: tfd ? answer.page_text : "" }),
   };
-  const labels = { brand_name: "Brand", generic_names: "Ingredients (separate with |)", strengths: "Strengths, same order (separate with |)",
+  const labels = { brand_name: "Brand", generic_names: 'Ingredients (separate with "|", not ",")', strengths: 'Strengths, same order (separate with "|", not ",")',
     dosage_form: "Dosage form", product_id: "Product ID", source_type: "What backs this", source_ref: "Source reference", passage_text: "Indications text, word for word from that source" };
   const button = el("button", { type: "submit" }, "Create pending rows");
   return el("form", {
     onsubmit: async (event) => {
       event.preventDefault();
-      button.disabled = true;
+      const done = busy(button, "Creating rows…");
       try {
         const json = Object.fromEntries(Object.entries(inputs).map(([field, input]) => [field, input.value]));
         const sent = await api(`/admin/web-answers/${encodeURIComponent(answer.cache_key)}/send`, { method: "POST", json });
@@ -637,7 +788,7 @@ function sendForm(answer) {
         location.hash = rowLink("products", sent.product_id);
       } catch (error) {
         say(error.message, "error");
-        button.disabled = false;
+        done();
       }
     },
   },
@@ -704,7 +855,15 @@ async function showWebAnswers() {
 
 async function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
+  const active = ["mine", "web", "add"].includes(parts[0]) ? parts[0] : "queue";
+  for (const link of document.querySelectorAll("nav .nav-button")) {
+    if (link.getAttribute("href").startsWith(`#/${active}`)) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
   try {
+    if (parts[0] && parts[0] !== "queue") {
+      show(el("h1", {}, "MedSight Review"), el("section", { class: "card" }, loading("Loading screen…")));
+    }
     if (parts[0] === "row" && parts[2]) await showRow(parts[1], parts[2]);
     else if (parts[0] === "edit" && parts[2]) await showEdit(parts[1], parts[2]);
     else if (parts[0] === "add") await showAdd(parts[1] || "products");

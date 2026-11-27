@@ -87,6 +87,7 @@ Design mockups: `Sample UI/MedSight Screens.pdf`.
 This plan was made before the CSP221A project guide. It still needs to be checked against the guide (web deployment, CRUD through the backend API, CI/CD).
 
 ## Done
+- Fixed the hosted review build test fixture to include the tracked navbar logo (`backend/review/Medsight-Logo-Light.png`).
 - Removed the Expo template examples; created empty files for the full folder structure
 - `src/app/_layout.tsx`: root Stack, header hidden, loads the Atkinson Hyperlegible font, wraps the app in `SettingsProvider`
 - `src/app/index.tsx`: Scan screen (History + Settings buttons, camera placeholder card, scan frame, guidance pill, Scan button)
@@ -100,7 +101,7 @@ This plan was made before the CSP221A project guide. It still needs to be checke
 - Promo video (24 s, landscape, 3D iPhone model, generated music): a separate Remotion project in the sibling folder `MedSight-video` (not in this repo). The Scan screen is a picture; Checking and the two Result screens are redrawn as web components with values copied from `theme.ts` and `messages.ts`, so update the copies there if the app changes. Render with `npm run render`.
 
 ## In progress
-- (nothing)
+- Backend review console UI: phone-responsive Waiting for Review queue with 20-row server-side pages, sorting and search; responsive live-total cards, system light/dark theme with #FFD60A accent, button-style navigation, apply-only filters, hover/press feedback and loading indicators. Sign-in offers an eye-icon password toggle; Add/Edit row fields include quoted separator and format hints, and product rows have an Edit button. On row details Decision is below Values and the spoken preview is on the right. Favicon and navbar logo live in `backend/review/`. See `backend/CHANGES.md` for verification.
 
 ## Up next
 - **Supabase setup**: run the SQL in `supabase_schema.md` (via the Supabase dashboard SQL Editor), then add `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` to `.env.local` and restart the dev server

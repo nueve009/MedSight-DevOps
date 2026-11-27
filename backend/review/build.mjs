@@ -7,7 +7,7 @@
 //   REVIEW_REQUIRE_MFA        optional; "off" turns two-step sign-in off (demo only), default on
 //
 // Never put a service key or a password in these variables.
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 const env = (name) => (process.env[name] || "").trim();
 const settings = {
@@ -34,6 +34,9 @@ for (const [name, value] of [["REVIEW_SUPABASE_URL", settings.supabaseUrl], ["RE
 }
 
 mkdirSync("dist", { recursive: true });
-for (const file of ["index.html", "review.css", "review.js"]) copyFileSync(file, `dist/${file}`);
+for (const file of ["index.html", "review.css", "review.js", "Medsight-Logo-Light.png"]) {
+  copyFileSync(file, `dist/${file}`);
+}
+if (existsSync("favicon.ico")) copyFileSync("favicon.ico", "dist/favicon.ico");
 writeFileSync("dist/config.js", `window.REVIEW_CONFIG = ${JSON.stringify(settings)};\n`);
 console.log(`Review page built for API ${settings.apiBase}, two-step sign-in ${settings.requireMfa ? "on" : "OFF"}`);

@@ -137,6 +137,40 @@ class PostgresReviewStore:
                         "AND lower(btrim(last_edited_by)) <> lower(btrim(%s))")
         return self._summaries([table] if table else list(TABLES.values()), where, [actor, actor], q, limit)
 
+    def queue_page(self, table: Optional[Table], q: str, actor: str,
+                   page: int = 1, sort: str = "oldest") -> dict:
+        """Filter across all tables before ordering and paging; never page each table independently."""
+        order = {
+            "oldest": "created_at ASC",
+            "newest": "created_at DESC",
+            "name_asc": "lower(label) ASC",
+            "name_desc": "lower(label) DESC",
+            "updated": "updated_at DESC",
+        }[sort]
+        tables = [table] if table else list(TABLES.values())
+        selects = []
+        params = []
+        for source in tables:
+            selects.append(sql.SQL(
+                "SELECT %s::text AS table_name, {key}::text AS key, {label}::text AS label, "
+                "review_state, entered_by, created_at, updated_at FROM {tbl} "
+                "WHERE review_state = 'pending' "
+                "AND lower(btrim(entered_by)) <> lower(btrim(%s)) "
+                "AND lower(btrim(last_edited_by)) <> lower(btrim(%s)) "
+                "AND position(lower(%s) in lower({key}::text || ' ' || {label}::text)) > 0"
+            ).format(key=sql.Identifier(source.key), label=sql.Identifier(source.label),
+                     tbl=sql.Identifier(source.name)))
+            params.extend([source.api_name, actor, actor, q])
+        base = sql.SQL(" UNION ALL ").join(selects)
+        with self._conn() as conn:
+            total = conn.execute(sql.SQL("SELECT count(*) AS total FROM ({}) AS queue").format(base),
+                                 params).fetchone()["total"]
+            rows = conn.execute(
+                sql.SQL("SELECT * FROM ({}) AS queue ORDER BY {}, table_name ASC, key ASC "
+                        "LIMIT %s OFFSET %s").format(base, sql.SQL(order)),
+                [*params, 20, (page - 1) * 20]).fetchall()
+        return {"items": [_clean(row) for row in rows], "total": total, "page": page, "page_size": 20}
+
     def mine(self, actor: str, limit: int = 200) -> list[dict]:
         where = sql.SQL("lower(btrim(entered_by)) = lower(btrim(%s)) "
                         "OR lower(btrim(last_edited_by)) = lower(btrim(%s))")

@@ -80,6 +80,10 @@ class FakeStore:
         self.queue_calls.append((table.api_name if table else None, q, actor))
         return []
 
+    def queue_page(self, table, q, actor, page, sort):
+        self.queue_calls.append((table.api_name if table else None, q, actor, page, sort))
+        return {"items": [], "total": 0, "page": page, "page_size": 20}
+
     def mine(self, actor):
         return []
 
@@ -226,6 +230,16 @@ def test_queue_passes_the_signed_in_name_and_filters(client, store):
 
 def test_unknown_queue_table_is_refused(client):
     assert client.get("/admin/kb/queue?table=reviewers", headers=auth()).status_code == 404
+
+def test_paged_queue_validates_sort_and_page_and_uses_reviewer(client, store):
+    response = client.get("/admin/kb/queue-page?table=products&q=flu&page=2&sort=name_asc",
+                          headers=auth("Ben"))
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "total": 0, "page": 2, "page_size": 20}
+    assert store.queue_calls == [("products", "flu", "Ben", 2, "name_asc")]
+    assert client.get("/admin/kb/queue-page?page=0", headers=auth()).status_code == 422
+    assert client.get("/admin/kb/queue-page?sort=made_up", headers=auth()).status_code == 422
+    assert client.get("/admin/kb/queue-page?table=reviewers", headers=auth()).status_code == 404
 
 
 # --- reading a row ---

@@ -79,7 +79,7 @@ def test_cors_allows_only_the_hosted_page(client):
 
 def test_vercel_build_writes_the_page_config(tmp_path):
     page_dir = Path(review_service.__file__).resolve().parent.parent / "review"
-    for name in ("build.mjs", "index.html", "review.css", "review.js"):
+    for name in ("build.mjs", "index.html", "review.css", "review.js", "Medsight-Logo-Light.png"):
         (tmp_path / name).write_bytes((page_dir / name).read_bytes())
     if shutil.which("node") is None:
         pytest.skip("node isn't installed")
@@ -88,6 +88,8 @@ def test_vercel_build_writes_the_page_config(tmp_path):
            "REVIEW_SUPABASE_ANON_KEY": "anon", "REVIEW_API_BASE": "https://r.up.railway.app"}
     done = subprocess.run(["node", "build.mjs"], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
+    assert (tmp_path / "dist" / "Medsight-Logo-Light.png").read_bytes() == (
+        page_dir / "Medsight-Logo-Light.png").read_bytes()
     text = (tmp_path / "dist" / "config.js").read_text()
     assert json.loads(text.split("= ", 1)[1].rstrip(";\n")) == {
         "supabaseUrl": "https://p.supabase.co", "supabaseAnonKey": "anon",
