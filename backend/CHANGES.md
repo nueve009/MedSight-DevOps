@@ -5,6 +5,28 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-27 - Parse: the maker is not the brand; trademark symbols stripped from names
+
+**Asked by Mon.** Found in the phone-photo eval: Ascof Lagundi photos without
+the ASCOF logo were spoken as "Pascual", and Solmux_Advance_4 spoke
+"Solmux® ADVANCE" (a real U+00AE in the PaddleOCR text, not mojibake).
+
+- `PARSE_SYSTEM_PROMPT` rule: `brand_name` is the product's own trade name,
+  never the manufacturer, distributor or marketer (Unilab, Pascual,
+  "Manufactured by ..."); only the maker printed -> `""`.
+  `PARSE_PROMPT_VERSION` 2 -> 3, so cached parses from the old prompt are not reused.
+- `utils.clean_name`, used by `llm_parse._text` for brand and ingredient names
+  only: symbol characters (So: ®, ™, ©, ℠, °) and control characters (Cc)
+  become a space; format (Cf), private-use (Co) and surrogate (Cs) characters
+  are removed; whitespace collapsed. Letters (accented too), digits and
+  punctuation stay. Strengths are not touched (µg/μg kept).
+- Tests: `tests/test_llm_parse.py` (Solmux®, Biogesic™, "Tempra ® Forte",
+  zero-width/soft hyphen, private use, accents kept, µg strengths unchanged).
+  LLM eval cases: `maker-only-no-brand`, `brand-not-maker-solmux`,
+  `bad-model-trademark-symbol` (offline only). Offline eval 24/24.
+
+---
+
 ## 2026-11-27 - eval_kb paces scans and retries on the rate limit
 
 **Asked by Mon.**

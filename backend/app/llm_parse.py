@@ -16,11 +16,11 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app import llm_client
-from app.utils import fence_untrusted
+from app.utils import clean_name, fence_untrusted
 
 # Bump when the prompt or schema changes, so the raw-text parse cache
 # doesn't serve answers from the old prompt.
-PARSE_PROMPT_VERSION = "2"
+PARSE_PROMPT_VERSION = "3"
 
 PARSE_SYSTEM_PROMPT = """You read noisy OCR text from Philippine medicine packaging \
 and list the medicine products on it.
@@ -38,6 +38,9 @@ order as generic_names (e.g. ["500 mg"]). Use "" for a strength you can't read.
 - confidence: number from 0 to 1 for how clearly the text could be read
 
 Rules:
+- brand_name is the product's own trade name, never the manufacturer, distributor \
+or marketer (e.g. not "Unilab", "Pascual", or the name after "Manufactured by", \
+"Distributed by" or "Marketed by"). If only the maker is printed, use "".
 - Only use words and numbers that appear (even misspelled) in the OCR text. Never \
 invent or complete a name or a strength.
 - A product with several active ingredients is ONE entry with several generic_names.
@@ -110,10 +113,12 @@ class ParseResult:
                    float(d.get("confidence", 0.0)))
 
 
-def _text(value, max_chars: int) -> str:
+def _text(value, max_chars: int, name: bool = False) -> str:
+    """The value with whitespace collapsed; names also lose ®, ™ and other
+    symbol or control characters (utils.clean_name). Strengths keep theirs."""
     if not isinstance(value, str):
         raise ValueError("expected a string")
-    value = " ".join(value.split())
+    value = clean_name(value) if name else " ".join(value.split())
     if len(value) > max_chars:
         raise ValueError("value too long")
     return value
@@ -138,8 +143,8 @@ def _validate(reply: dict) -> ParseResult:
             raise ValueError("generic_names and strengths must be lists")
         if len(generics) > MAX_INGREDIENTS or len(strengths) > MAX_INGREDIENTS:
             raise ValueError("too many ingredients")
-        brand = _text(item.get("brand_name", ""), MAX_NAME_CHARS) or None
-        generics = tuple(_text(g, MAX_NAME_CHARS) for g in generics)
+        brand = _text(item.get("brand_name", ""), MAX_NAME_CHARS, name=True) or None
+        generics = tuple(_text(g, MAX_NAME_CHARS, name=True) for g in generics)
         strengths = tuple(_text(s, MAX_STRENGTH_CHARS) for s in strengths)
         # A chemical name may start with a locant ("2,4-Dichlorobenzyl alcohol",
         # "5-Fluorouracil"); a strength in the ingredient slot ("500 mg") may not.
