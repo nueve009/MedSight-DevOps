@@ -31,6 +31,7 @@ python -m scripts.kb_build --push --kb-dir <folder>       # import CSV drafts in
 python -m scripts.kb_build --pull [--csv-out kb]          # approved Supabase rows -> data/kb.sqlite (+ CSVs)
 python -m scripts.kb_draft_descriptions                   # LLM drafts of spoken descriptions -> kb/staging/
 python -m scripts.eval_kb [--out report.json]             # labeled scans; exit 1 on any wrong reviewed answer
+python -m scripts.eval_kb --kb-source postgres            # same, against the approved Supabase rows (read-only)
 python -m scripts.kb_make_scans sorted_output/packaging   # draft eval scans from images
 python -m scripts.migrate [--check]                       # apply migrations/ to Supabase (MIGRATION_DATABASE_URL)
 python -m scripts.store_admin export --out <dir> | restore <file> | purge   # nightly backup and cleanup

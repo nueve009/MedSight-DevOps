@@ -383,6 +383,9 @@ line:
   poor light, unlisted medicines and two products in view.
 - `python -m scripts.kb_make_scans sorted_output/packaging` drafts lines
   from dataset photos into `eval/scans_draft.jsonl` for labeling.
+  The team's phone photos go in `eval/photos/` and the draft file stays
+  local; both are git-ignored. Copy a line into `scans.jsonl` only after a
+  teammate has set its `expected` value.
 
 Run them (this calls the real LLM, so use a key or local Ollama):
 
@@ -390,6 +393,23 @@ Run them (this calls the real LLM, so use a key or local Ollama):
 python -m scripts.kb_build --pull     # data/kb.sqlite from the approved rows in Supabase
 python -m scripts.eval_kb --out eval_report.json
 ```
+
+Or skip the pull and read the approved rows straight from Supabase, the same
+way the server does (read-only; needs `KB_DATABASE_URL` or `DATABASE_URL`):
+
+```powershell
+python -m scripts.eval_kb --kb-source postgres --out eval_report.json
+```
+
+`--kb-source` defaults to `postgres` when `KB_BACKEND=postgres`, else
+`sqlite`. The script prints how many approved products it loaded and the
+`kb_version`, and stops if there are none.
+
+It prints `[i/N] id` for each scan and waits `--pace` seconds (default 4)
+between scans to stay under Groq's free-tier per-minute limit. A scan that
+hits the rate limit (HTTP 429) is retried after 30 s and then 60 s; if it is
+still rate-limited, the run stops with a message naming the scan and exit
+code 2, and writes no report (a rate-limited scan is never counted as wrong).
 
 **Release gate:** 0 wrong reviewed answers on at least 100 labeled scans,
 and at least 95% of unlisted medicines not matched. The script exits with

@@ -3,6 +3,7 @@ the dosing check, and JSONL logging."""
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +11,26 @@ from pathlib import Path
 def clean_text(s: str) -> str:
     """Lowercase, trimmed, with runs of whitespace collapsed to one space."""
     return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+# Unicode categories dropped from product names: symbols (So: ®, ™, ©, ℠, °),
+# control (Cc), format (Cf: zero-width, soft hyphen), private use (Co) and
+# surrogates (Cs). Letters (accented too), digits and punctuation such as
+# - , . / ( ) % + are kept.
+_SPACED = {"So", "Cc"}           # replaced by a space: "Solmux®ADVANCE" -> "Solmux ADVANCE"
+_REMOVED = {"Cf", "Co", "Cs"}    # removed: "Bio<soft hyphen>gesic" -> "Biogesic"
+
+
+def clean_name(s: str) -> str:
+    """A brand or ingredient name without trademark and other symbol, control or
+    format characters, whitespace collapsed. "Tempra ® Forte" -> "Tempra Forte"."""
+    out = []
+    for ch in s or "":
+        cat = unicodedata.category(ch)
+        if cat in _REMOVED:
+            continue
+        out.append(" " if cat in _SPACED else ch)
+    return " ".join("".join(out).split())
 
 
 def normalize_strength(s: str) -> str:

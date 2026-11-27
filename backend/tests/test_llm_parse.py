@@ -79,3 +79,30 @@ def test_ocr_text_is_fenced_and_cannot_close_the_fence(fake_llm):
 def test_blank_text_makes_no_llm_call(fake_llm):
     assert parse_label("   ").valid is False
     assert fake_llm.calls == []
+
+
+@pytest.mark.parametrize("printed, expected", [
+    ("Solmux®", "Solmux"),
+    ("Biogesic™", "Biogesic"),
+    ("Tempra ® Forte", "Tempra Forte"),
+    ("Solmux®ADVANCE", "Solmux ADVANCE"),
+    ("Kremil-S℠ ©", "Kremil-S"),
+    ("Bio­gesic​", "Biogesic"),          # soft hyphen and zero-width space (Cf)
+    ("Neozep Forte", "Neozep Forte"),        # private use (Co)
+    ("Niño (Kids) 5% +C", "Niño (Kids) 5% +C"),   # accents and normal punctuation stay
+])
+def test_trademark_and_symbol_characters_are_stripped_from_brands(fake_llm, printed, expected):
+    result = parse_with(fake_llm, labels.reply(labels.product(printed, ["Paracetamol"], ["500 mg"])))
+    assert result.valid and result.products[0].brand == expected
+
+
+def test_symbols_are_stripped_from_ingredients_but_strengths_keep_micro_sign(fake_llm):
+    result = parse_with(fake_llm, labels.reply(labels.product(
+        "", ["Cyanocobalamin®", "Folic​ acid"], ["500 µg", "400 μg"])))
+    assert result.products[0].generics == ("Cyanocobalamin", "Folic acid")
+    assert result.products[0].strengths == ("500 µg", "400 μg")
+
+
+def test_prompt_says_the_maker_is_not_the_brand():
+    assert "never the manufacturer" in llm_parse.PARSE_SYSTEM_PROMPT
+    assert llm_parse.PARSE_PROMPT_VERSION == "3"
