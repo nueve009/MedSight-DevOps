@@ -1,3 +1,21 @@
+# MedSight
+
+MedSight helps visually impaired users identify over-the-counter Philippine medicines. The phone reads the box with on-device OCR, the backend identifies the medicine, and the app speaks the answer. Unverified answers are spoken with a warning first.
+
+**Final technical documentation (CSP221A):** [MedSight - CSP221A Final Technical Documentation](https://docs.google.com/document/d/1Ho6fq36lJKS17dtuvHRzpmHUz9wuEE-p6CgGVD_5Ito/edit)
+
+| | |
+|---|---|
+| Release | [v1.0.0](https://github.com/nueve009/MedSight-DevOps/releases/tag/v1.0.0) (commit [0334c25](https://github.com/nueve009/MedSight-DevOps/commit/0334c25)) |
+| Scan API (Railway) | https://medsight-devops-production-db3cc399.up.railway.app |
+| Review console (Vercel) | https://medsight-devops-review.vercel.app |
+| Backend | [backend/README.md](backend/README.md) |
+| CI/CD | [docs/CICD.md](docs/CICD.md) |
+| Sprint board | [docs/SPRINT.md](docs/SPRINT.md) |
+| App status | [PROGRESS.md](PROGRESS.md) |
+
+---
+
 # Welcome to your Expo app 👋
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
