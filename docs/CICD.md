@@ -2,7 +2,7 @@
 
 How a change gets from a commit to a running app in this project, with the numbers and problems behind it.
 
-Path of a change: branch, pull request, checks pass, one teammate approves, merge into `main`, Android build. A production build is started by hand and needs an approval.
+Path of a change: branch, pull request, checks pass, one teammate approves, merge into `main`. After the merge, an Android build starts by itself, and when the change touches `backend/`, Railway deploys the backend by itself. A production build is started by hand and needs an approval.
 
 ## Overview
 
@@ -13,6 +13,7 @@ Path of a change: branch, pull request, checks pass, one teammate approves, merg
 | Merge rules           | Pull request required, 1 approving review, the `test`, `backend` and `secret-scan` checks must pass         | Branch ruleset `protect-main`          |
 | Staging build (CD)    | After a merge, builds the Android `.apk` with Expo EAS Build (`preview` profile)                            | `.github/workflows/mobile-build.yml`   |
 | Production build (CD) | Started by hand, waits for an approval, then builds the `.apk` with the `production` profile                | `.github/workflows/mobile-release.yml` |
+| Backend deploy (CD)   | After a merge that changes `backend/`, Railway builds the Docker image and deploys it                       | Railway service settings (no workflow) |
 | Dependency updates    | Weekly GitHub Actions updates                                                                               | `.github/dependabot.yml`               |
 | Release and rollback  | See the "Release and rollback" section                                                                      | -                                      |
 
@@ -50,7 +51,8 @@ The `backend` job starts a throwaway `postgres:16` container as a service and se
 
 - `backend/Dockerfile` packages the backend. It starts from `python:3.12-slim`, installs `requirements.txt`, runs as a normal user (not root), and starts the server with `uvicorn app.api:app` on the port in the `PORT` variable (8000 if it is not set).
 - `backend/.dockerignore` keeps `.env` files, caches and tests out of the image.
-- The `docker-build` job builds the image on every pull request, so a broken Dockerfile turns the check red. The image is not pushed or deployed yet, and CI does not start the container.
+- The `docker-build` job builds the image on every pull request, so a broken Dockerfile turns the check red. In CI the image is only built to test the Dockerfile. It is not pushed anywhere, and CI does not start the container.
+- Railway builds its own image from the same Dockerfile when it deploys (see "Backend deploy (Railway)").
 - CI also uses Docker for the `postgres:16` test container described above.
 
 ## Branch protection
@@ -65,14 +67,16 @@ Ruleset `protect-main`:
 - Tested with a deliberately broken pull request (type error): the check failed and the merge was blocked
 - Tested again on PR #55: `secret-scan` failed on two gitleaks findings and the merge stayed blocked until it was resolved (see the security review log)
 - Tested the approval rule on 2026-11-14 with a test pull request: with no approval, the merge button was blocked and the merge box said an approving review is required (screenshot saved on that pull request, which was closed without merging)
+- A direct push to `main` is rejected by the ruleset (error GH013)
 
-Why approvals are on: passing checks only shows that the code builds and the tests pass. A second person can catch wrong settings, risky changes or files that should not be committed, before they reach `main` and start a build.
+Why approvals are on: passing checks only shows that the code builds and the tests pass. A second person can catch wrong settings, risky changes or files that should not be committed, before they reach `main` and start a build or a deploy.
 
 ## Environments and secrets
 
 - `staging`: no rules. It holds the `EXPO_TOKEN` secret, and the staging build job runs in it.
 - `production`: required reviewer, only `main` can deploy, admin bypass turned off. It holds its own copy of the `EXPO_TOKEN` secret, and the production build job runs in it. Self-review is allowed, so the person who starts a release can approve it.
 - Secrets are stored per environment in GitHub, never in the code
+- The backend's settings (database connection and other variables) are stored in Railway, never in the repository
 
 ## Security tools
 
@@ -148,6 +152,28 @@ The cause: `eas build` reads `app.json` and loads its plugins from `node_modules
 - The Expo project belongs to one account (`nueve09`). Teammates need an invite on expo.dev to see the build page, or they can be sent the `.apk` file.
 - The workflows only build the app. Lint and type checks run in `ci.yml` before a merge.
 
+## Backend deploy (Railway)
+
+The backend runs on Railway. There is no GitHub workflow for this step: Railway watches the repository and deploys by itself.
+
+- **Source:** the GitHub repository `nueve009/MedSight-DevOps`, branch `main`
+- **Build:** Railway builds the image from `backend/Dockerfile`. The service's Root Directory is `backend`.
+- **Trigger:** auto deploy is on. The watch path is `/backend/**`, so a merge that only changes the app, docs or `.md` files does not start a backend deploy.
+- **Healthcheck:** Railway calls `/health` while it deploys (retry window 5 minutes). The build log shows "Healthcheck succeeded" before the deployment is Active.
+- **Variables:** the backend's settings are stored as Railway variables and are never written in the repository. `MEDSIGHT_TEST_DATABASE_URL` must never exist in Railway and must never point at Supabase.
+- **How to check a deploy:** open the service's Deployments tab. The newest deployment should be Active with GitHub as its source. Then open `/health`. It should show `status: ok` and `database: ok`, and the commit should match the merge.
+- **Logs:** the deploy logs show one line per request (method, path, status code and time in milliseconds), plus the startup lines and any warnings.
+
+### Problem found and fixed
+
+After the first pipeline demo merge, the Mobile Build started by itself, but Railway did not deploy, and `/health` still showed the old commit. The first guess, that Railway was waiting for the mobile build, was wrong and was not confirmed.
+
+What was checked: both demo files were in the merge, the watch path was `/backend/**`, the branch was `main`, the Root Directory was `backend`, the repository was correct, and all GitHub runs were green.
+
+The cause: auto deploy was turned off on the Railway service. It was turned on, and a new deployment was started by hand once, so the service had the latest code. After that, a small `backend/` change was sent through a pull request, approved and merged, and Railway started a new deployment by itself.
+
+Lesson: check the service settings before guessing a cause, and do not call a manual deployment automatic.
+
 ## Release and rollback
 
 ### Release procedure
@@ -161,6 +187,12 @@ Staging (automatic):
 5. `mobile-build.yml` starts by itself and builds the preview `.apk` (about 15-16 minutes). Merges that only change `backend/**`, `docs/**` or `.md` files start no build.
 6. Check the run in the Actions tab, then check that the build on expo.dev is for the same commit.
 
+Backend (automatic):
+
+1. Follow steps 1 to 4 above with a change in `backend/`.
+2. Railway starts a deployment by itself. Do not click anything in Railway.
+3. Wait until the deployment is Active, then open `/health` and check `status: ok`, `database: ok` and the commit.
+
 Production (by hand, with an approval):
 
 1. Open Actions, then Mobile Release, then "Run workflow" on `main`.
@@ -171,12 +203,13 @@ Production (by hand, with an approval):
 
 ### Rollback procedure
 
-There are two ways to go back to a working version. Neither has been tested yet (see "Rollback test" below).
+There are three ways to go back to a working version. None has been tested yet (see "Rollback test" below).
 
-1. **Install an earlier build.** This is the fastest way, because it needs no new build. Open expo.dev, find the last good build, and install its `.apk`. Expo keeps each build for about 13 days, so an older `.apk` must be downloaded and saved before it expires.
-2. **Revert the change in Git.** On the merged pull request, click the "Revert" button. GitHub makes a new branch and a new pull request that undoes the change. That pull request needs the same checks and 1 approval as any other, because `main` is protected. After it is merged, `mobile-build.yml` builds a new staging `.apk` from the reverted code. For production, start Mobile Release again and approve it.
+1. **Roll the backend back on Railway.** Open the service's Deployments tab, choose the last good deployment, and use its menu to roll back or redeploy it (the name depends on Railway's screen). Wait until it is Active, then check `/health`. This only brings back the old code. It does not undo database changes or changed variables. The bad commit is still on `main`, so the next merge would deploy it again. Also do way 3 to fix `main`.
+2. **Install an earlier app build.** This is the fastest way for the phone app, because it needs no new build. Open expo.dev, find the last good build, and install its `.apk`. Expo keeps each build for about 13 days, so an older `.apk` must be downloaded and saved before it expires.
+3. **Revert the change in Git.** On the merged pull request, click the "Revert" button. GitHub makes a new branch and a new pull request that undoes the change. That pull request needs the same checks and 1 approval as any other, because `main` is protected. After it is merged, `mobile-build.yml` builds a new staging `.apk` from the reverted code, and Railway deploys the reverted backend if `backend/` changed. For production, start Mobile Release again and approve it.
 
-Rules for both ways:
+Rules for all ways:
 
 - Never rewrite history on `main` (no force push, no reset). Force pushes are blocked, and the `.gitleaksignore` entries contain commit hashes, so rewriting history would break them.
 - Never delete the signing keystore on Expo's servers.
@@ -185,7 +218,7 @@ Rules for both ways:
 ### Rollback test
 
 - Status: not tested yet
-- Plan: revert the pull request used in the recorded demo with the "Revert" button, merge the revert, and check that the new staging build starts and the app opens
+- Plan: for the backend, roll back to the previous Railway deployment and check `/health`, then redeploy the latest one. For the app, revert the pull request used in the recorded demo with the "Revert" button, merge the revert, and check that the new staging build starts and the app opens.
 - Result: (to be filled in after the test: date, pull request numbers, run number, build time, and whether the app worked)
 
 ## Optimizations
@@ -193,6 +226,7 @@ Rules for both ways:
 What is already in place to keep the pipeline fast, safe and cheap:
 
 - **Skipped builds:** a merge that only changes `backend/**`, `docs/**` or `.md` files does not start a mobile build, which saves about 15 minutes of build time and one build from the Expo monthly limit.
+- **Backend deploys only when needed:** the Railway watch path is `/backend/**`, so app-only and docs-only merges do not redeploy the backend.
 - **npm cache:** `actions/setup-node` caches the npm packages, so `npm ci` is faster on later runs.
 - **Cancel old runs:** `ci.yml` stops an older run when a newer push arrives on the same branch.
 - **One build at a time:** the mobile workflows use `concurrency` without cancelling a running build, so builds do not overlap and no build is lost. The cost is waiting: run #4 waited about 12 minutes for run #3.
@@ -213,11 +247,11 @@ Measured result: the automatic staging runs took 14m 54s to 16m 20s. Most of tha
 | Time check        | See the Numbers section: frontend checks take about 25-41s, backend checks about 1 minute, a mobile build about 15 minutes.                                                                                                                               |
 | DORA metrics      | See below.                                                                                                                                                                                                                                                |
 | Hosting           | See below.                                                                                                                                                                                                                                                |
-| Docker            | `backend/Dockerfile` packages the backend, and the `docker-build` job builds the image on every pull request (PR #48). CI also runs a `postgres:16` container for the store tests.                                                                        |
+| Docker            | `backend/Dockerfile` packages the backend, and the `docker-build` job builds the image on every pull request (PR #48). Railway builds the same Dockerfile to run the backend. CI also runs a `postgres:16` container for the store tests.                 |
 
 ### DORA metrics (as of Nov 11, 2026)
 
-A "deployment" here is a successful mobile build, which produces an installable `.apk`. Staging builds start after a merge, and production builds are started by hand after an approval. The numbers were calculated by hand from the Actions runs and the git history.
+A "deployment" here is a successful mobile build, which produces an installable `.apk`. Staging builds start after a merge, and production builds are started by hand after an approval. The numbers were calculated by hand from the Actions runs and the git history. They do not include Railway backend deploys.
 
 | Metric                | Result                                                                                                                                                                                                                                                                                                                                                                 |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -230,12 +264,12 @@ The sample is small (10 builds in about 10 days), so these numbers show how the 
 
 ### Hosting
 
-| What                            | Where            | Status                                                    |
-| ------------------------------- | ---------------- | --------------------------------------------------------- |
-| Code, pipeline and secrets      | GitHub           | In use                                                    |
-| Android builds and `.apk` files | Expo (EAS Build) | In use. Each `.apk` is kept about 13 days.                |
-| Backend API                     | Railway          | Planned, not set up yet                                   |
-| Database                        | Supabase         | Planned. A staging project exists, setup is not finished. |
+| What                            | Where            | Status                                                                                    |
+| ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------- |
+| Code, pipeline and secrets      | GitHub           | In use                                                                                    |
+| Android builds and `.apk` files | Expo (EAS Build) | In use. Each `.apk` is kept about 13 days.                                                |
+| Backend API                     | Railway          | In use. Built from `backend/Dockerfile` and deployed by itself after a merge into `main`. |
+| Database                        | Supabase         | In use. The backend keeps its cache and its reviewed dataset there.                       |
 
 ## Numbers
 
@@ -277,11 +311,12 @@ The sample is small (10 builds in about 10 days), so these numbers show how the 
 - The frontend has no tests, and no `build` or `test` script in the project, so CI checks style and types only
 - `docker-build` and CodeQL are not required checks, so a failure there does not block a merge. CodeQL alerts need a person to look at them.
 - Every pull request now needs an approval from a teammate. If the only reviewer is not available, merging waits, because nobody can bypass the rule.
+- Railway deploys when `backend/` changes are merged into `main`. It was not checked whether Railway has a setting to wait for other checks before it deploys.
+- A Railway rollback only brings back the old code. It does not undo database changes or changed variables.
 
 ## Not done yet
 
 - A first frontend test, which is the app team's decision
-- Setting up Railway (backend hosting) and finishing the Supabase staging project
 - A full approval test: a teammate approves a pull request and the merge button turns green (only the blocked side has been tested so far)
 - The rollback test (see "Rollback test")
 
