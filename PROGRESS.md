@@ -87,6 +87,7 @@ Design mockups: `Sample UI/MedSight Screens.pdf`.
 This plan was made before the CSP221A project guide. It still needs to be checked against the guide (web deployment, CRUD through the backend API, CI/CD).
 
 ## Done
+- Fixed the hosted review build test fixture to include the tracked navbar logo (`backend/review/Medsight-Logo-Light.png`).
 - Removed the Expo template examples; created empty files for the full folder structure
 - `src/app/_layout.tsx`: root Stack, header hidden, loads the Atkinson Hyperlegible font, wraps the app in `SettingsProvider`
 - `src/app/index.tsx`: Scan screen (History + Settings buttons, camera placeholder card, scan frame, guidance pill, Scan button)

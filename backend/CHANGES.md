@@ -5,6 +5,14 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-27 - Hosted review build test includes logo
+
+- The Vercel build test now copies `Medsight-Logo-Light.png` into its
+  temporary review folder and checks the built asset matches the source.
+  The PNG was already tracked at `backend/review/Medsight-Logo-Light.png`.
+
+---
+
 ## 2026-11-26 - Compact password visibility control
 
 - Replaced the sign-in Show password text with a small eye icon in a 44px
