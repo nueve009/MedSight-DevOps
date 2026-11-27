@@ -5,6 +5,20 @@ can pick up where the last session left off. Newest entry first.
 
 ---
 
+## 2026-11-27 - eval_kb paces scans and retries on the rate limit
+
+**Asked by Mon.**
+
+- `scripts/eval_kb.py --pace SECONDS` (default 4, as in `eval_llm.py` live mode)
+  waits between scans and prints `[i/N] id` for each one.
+- On `LLMUnavailableError` from a Groq 429 ("rate limit") the scan is retried
+  after 30 s, then 60 s. If it is still rate-limited the run stops with exit
+  code 2 and a message naming the scan; no report is written and nothing is
+  counted as wrong. Other LLM errors are not retried (exit 1, as before).
+- Tests in `tests/test_kb_scripts.py` patch `time.sleep` out (no network).
+
+---
+
 ## 2026-11-27 - eval_kb can read the approved rows from Supabase; first phone eval photos
 
 **Asked by Mon.**

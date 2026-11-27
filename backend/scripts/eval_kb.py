@@ -12,6 +12,11 @@ the approved rows in Supabase, read the same way the server reads them
 (app/kb_source.py, KB_DATABASE_URL or DATABASE_URL, a read-only transaction).
 A fresh temporary cache is used so earlier answers can't hide a problem.
 
+To stay under Groq's free-tier per-minute limit it waits --pace seconds
+(default 4) between scans. A scan that hits the rate limit (HTTP 429) is
+retried after 30 s and then 60 s; if it is still rate-limited the run stops
+with a clear message (exit code 2) instead of counting the scan as wrong.
+
 Each line of kb/eval/scans.jsonl:
     {"id": "biogesic-phone-1", "ocr_text": "BIOGESIC\\nParacetamol 500 mg", "ocr_confidence": 0.91,
      "blocks": [{"text": "BIOGESIC", "box": [0.1, 0.2, 0.6, 0.3]}],          (optional)
@@ -19,7 +24,7 @@ Each line of kb/eval/scans.jsonl:
 
 Usage:
     python -m scripts.eval_kb [--scans kb/eval/scans.jsonl] [--kb-source sqlite|postgres]
-                              [--kb-db data/kb.sqlite] [--out report.json]
+                              [--kb-db data/kb.sqlite] [--pace 4] [--out report.json]
 
 --kb-source defaults to postgres when KB_BACKEND=postgres, else sqlite.
 """
@@ -27,6 +32,7 @@ import argparse
 import json
 import sys
 import tempfile
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,12 +100,47 @@ def load_scans(path: Path, kb: KnowledgeBase) -> list[dict]:
     return scans
 
 
-def evaluate(scans: list[dict], kb: KnowledgeBase, cache: Store) -> dict:
+PACE_S = 4                     # between scans, like scripts/eval_llm.py in live mode
+RATE_LIMIT_WAITS_S = (30, 60)  # before each retry of a rate-limited scan
+
+
+class RateLimitedError(RuntimeError):
+    """The LLM stayed rate-limited after every retry; the run stops instead of counting the scan."""
+
+
+def is_rate_limit(e: Exception) -> bool:
+    return "rate limit" in str(e).lower()   # llm_client's message for HTTP 429
+
+
+def _identify(scan: dict, kb: KnowledgeBase, cache: Store, waits: tuple[float, ...]) -> dict:
+    req = ScanRequest(scan["ocr_text"], blocks=_blocks(scan.get("blocks")),
+                      ocr_confidence=scan.get("ocr_confidence"), meta={"client": "eval"})
+    for attempt in range(len(waits) + 1):
+        try:
+            return identify_scan(req, cache, kb)
+        except llm_client.LLMUnavailableError as e:
+            if not is_rate_limit(e):
+                raise
+            if attempt == len(waits):
+                raise RateLimitedError(f"still rate-limited after {len(waits)} retries") from e
+            print(f"    rate limited; waiting {waits[attempt]:g} s, then retry {attempt + 1} of {len(waits)}")
+            time.sleep(waits[attempt])
+    raise AssertionError("unreachable")
+
+
+def evaluate(scans: list[dict], kb: KnowledgeBase, cache: Store, pace_s: float = 0,
+             rate_limit_waits_s: tuple[float, ...] = RATE_LIMIT_WAITS_S) -> dict:
+    """Runs every scan. Raises RateLimitedError (naming the scan) if one stays rate-limited."""
     results = []
-    for scan in scans:
-        r = identify_scan(ScanRequest(scan["ocr_text"], blocks=_blocks(scan.get("blocks")),
-                                      ocr_confidence=scan.get("ocr_confidence"), meta={"client": "eval"}),
-                          cache, kb)
+    for i, scan in enumerate(scans, start=1):
+        if i > 1 and pace_s > 0:
+            time.sleep(pace_s)
+        print(f"[{i}/{len(scans)}] {scan.get('id')}", flush=True)
+        try:
+            r = _identify(scan, kb, cache, rate_limit_waits_s)
+        except RateLimitedError as e:
+            raise RateLimitedError(f"scan {scan.get('id')} ({i}/{len(scans)}) {e}; "
+                                   f"{i - 1} scans finished, none counted") from e.__cause__
         outcome = classify(scan["expected"], r)
         results.append({"id": scan.get("id"), "expected": scan["expected"], "outcome": outcome,
                         "status": r["status"], "tier": r["tier"], "matched_product_id": r["matched_product_id"],
@@ -153,6 +194,8 @@ def main() -> None:
     parser.add_argument("--kb-source", choices=("sqlite", "postgres"), default=None,
                         help="default: postgres when KB_BACKEND=postgres, else sqlite")
     parser.add_argument("--kb-db", type=Path, default=None, help="sqlite only; default: data/kb.sqlite")
+    parser.add_argument("--pace", type=float, default=PACE_S, metavar="SECONDS",
+                        help=f"wait between scans to stay under the LLM rate limit (default {PACE_S})")
     parser.add_argument("--out", type=Path, help="write the full report as JSON")
     args = parser.parse_args()
 
@@ -164,7 +207,11 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="medsight_eval_") as tmp:
         config.RUN_LOG_PATH = Path(tmp) / "run_log.jsonl"   # keep eval scans out of the real run log
         try:
-            report = evaluate(scans, kb, SQLiteStore(Path(tmp) / "cache.sqlite"))
+            report = evaluate(scans, kb, SQLiteStore(Path(tmp) / "cache.sqlite"), pace_s=args.pace)
+        except RateLimitedError as e:
+            print(f"Stopped: the LLM rate limit (HTTP 429) {e}. No report was written. "
+                  "Wait a few minutes, or rerun with a larger --pace.", file=sys.stderr)
+            sys.exit(2)
         except llm_client.LLMUnavailableError as e:
             sys.exit(f"The LLM is unavailable: {e}")
 

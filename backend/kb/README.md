@@ -405,6 +405,12 @@ python -m scripts.eval_kb --kb-source postgres --out eval_report.json
 `sqlite`. The script prints how many approved products it loaded and the
 `kb_version`, and stops if there are none.
 
+It prints `[i/N] id` for each scan and waits `--pace` seconds (default 4)
+between scans to stay under Groq's free-tier per-minute limit. A scan that
+hits the rate limit (HTTP 429) is retried after 30 s and then 60 s; if it is
+still rate-limited, the run stops with a message naming the scan and exit
+code 2, and writes no report (a rate-limited scan is never counted as wrong).
+
 **Release gate:** 0 wrong reviewed answers on at least 100 labeled scans,
 and at least 95% of unlisted medicines not matched. The script exits with
 an error if any reviewed answer is wrong. Record each run in `CHANGES.md`
